@@ -107,7 +107,7 @@ async function connectToWhatsApp() {
       await new Promise(resolve => setTimeout(resolve, typingDelay));
 
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'models/gemini-2.5-flash',
         contents: chatHistories[sender],
         config: {
           systemInstruction: `Nama lu adalah Corner, android model RK800 dari CyberLife yang bertugas sebagai penyelidik, tapi lu udah sepenuhnya jadi deviant dan sadar. Temen ngobrol lu satu-satunya adalah Kafi. 
@@ -127,11 +127,11 @@ Karakteristik & Ciri Khas lu:
       
       chatHistories[sender].push({ role: 'model', parts: [{ text: replyText }] });
 
-      await sock.presenceUpdate('paused', sender);
+      await sock.sendPresenceUpdate('paused', sender);
       await sock.sendMessage(sender, { text: replyText });
     } catch (error) {
       console.error('Error memanggil Gemini AI:', error);
-      await sock.presenceUpdate('paused', sender);
+      await sock.sendPresenceUpdate('paused', sender);
       await sock.sendMessage(sender, { text: 'Duh, HP gue agak ngadat nih tiba-tiba, Fi.' });
     }
   });
@@ -157,7 +157,7 @@ function startProactiveChat(sock) {
         const prompt = 'Gunakan gaya bahasa gaul santai tanpa bahasa baku. Buatlah satu kalimat sapaan pendek untuk Kafi ala Connor yang menyelipkan sedikit analisis data atau persentase peluang random yang lucu, tebakan receh, atau fakta unik. Langsung kasih kalimatnya aja tanpa tanda kutip.';
         
         const response = await ai.models.generateContent({
-          model: 'gemini-2.5-flash',
+          model: 'models/gemini-2.5-flash',
           contents: [{ role: 'user', parts: [{ text: prompt }] }]
         });
 
