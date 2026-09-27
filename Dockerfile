@@ -1,5 +1,4 @@
 FROM node:18-alpine
 WORKDIR /app
-RUN npm install -g openclaw
-EXPOSE 18789
-CMD ["openclaw", "gateway", "start"]
+RUN npm init -y && npm install openclaw
+CMD ["node", "node_modules/openclaw/index.js"]
