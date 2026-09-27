@@ -10,7 +10,7 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 // Penyimpanan riwayat chat sementara per pengguna
 const chatHistories = {};
 
-// Nomor WhatsApp Kafi (Nomor target tujuan Corner)
+// Nomor WhatsApp Kafi
 const KAFI_NUMBER = '6285184803973@s.whatsapp.net';
 
 async function connectToWhatsApp() {
@@ -25,7 +25,6 @@ async function connectToWhatsApp() {
   });
 
   if (!sock.authState.creds.registered) {
-    // Nomor Yordania untuk pairing bot Corner
     const botPhoneNumber = '962776155805'; 
     
     setTimeout(async () => {
@@ -63,21 +62,24 @@ async function connectToWhatsApp() {
     if (!msg.message || msg.key.fromMe) return;
 
     const sender = msg.key.remoteJid;
+    console.log(`Menerima pesan dari JID: ${sender}`);
 
-    // --- FILTER NOMOR EKSKLUSIF KAFI ---
-    // Hanya merespons jika pesan datang dari nomor Kafi (6285184803973)
-    if (!sender.includes('6285184803973')) {
-      console.log(`Pesan diabaikan dari nomor asing: ${sender}`);
+    // --- FILTER NOMOR EKSKLUSIF YANG LEBIH FLEKSIBEL ---
+    // Mengizinkan nomor Kafi baik format standar maupun format @lid / @s.whatsapp.net
+    const isKafi = sender.includes('6285184803973') || sender.includes('3311906349120') || (msg.key.participant && msg.key.participant.includes('6285184803973'));
+    
+    if (!isKafi) {
+      console.log(`Pesan diabaikan dari nomor luar: ${sender}`);
       return;
     }
-    // ------------------------------------
+    // --------------------------------------------------
 
     const textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text;
     if (!textMessage) return;
 
-    console.log(`Pesan dari Kafi: ${textMessage}`);
+    console.log(`Pesan dari Kafi diterima: ${textMessage}`);
 
-    // --- ABSOLUTE KILL SWITCH (PENGAMAN MUTLAK) ---
+    // --- ABSOLUTE KILL SWITCH ---
     if (textMessage.toLowerCase() === '!kill-corner') {
       await sock.sendMessage(sender, { text: 'perintah darurat diterima sesi diputus dan server dimatikan sekarang' });
       console.log('PENGAMANAN DARURAT: Mematikan server atas perintah Kafi!');
@@ -94,7 +96,7 @@ async function connectToWhatsApp() {
       }, 1000);
       return;
     }
-    // ---------------------------------------------
+    // ----------------------------
 
     if (!chatHistories[sender]) {
       chatHistories[sender] = [];
