@@ -22,7 +22,7 @@ async function connectToWhatsApp() {
   });
 
   if (!sock.authState.creds.registered) {
-    const phoneNumber = '6285184803973'; 
+    const phoneNumber = '962776155805'; 
     
     setTimeout(async () => {
       try {
