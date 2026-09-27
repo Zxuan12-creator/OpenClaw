@@ -10,6 +10,9 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 // Penyimpanan riwayat chat sementara per pengguna
 const chatHistories = {};
 
+// Nomor WhatsApp Kafi (Nomor target tujuan Corner)
+const KAFI_NUMBER = '6285184803973@s.whatsapp.net';
+
 async function connectToWhatsApp() {
   const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
   const { version } = await fetchLatestBaileysVersion();
@@ -22,14 +25,15 @@ async function connectToWhatsApp() {
   });
 
   if (!sock.authState.creds.registered) {
-    const phoneNumber = '962776155805'; 
+    // Nomor Yordania untuk pairing bot Corner
+    const botPhoneNumber = '962776155805'; 
     
     setTimeout(async () => {
       try {
-        let code = await sock.requestPairingCode(phoneNumber);
+        let code = await sock.requestPairingCode(botPhoneNumber);
         code = code?.match(/.{1,4}/g)?.join('-') || code;
         console.log(`\n========================================`);
-        console.log(`PAIRING CODE WHATSAPP KAMU: ${code}`);
+        console.log(`PAIRING CODE WHATSAPP CORNER: ${code}`);
         console.log(`========================================\n`);
       } catch (err) {
         console.error('Gagal mendapatkan pairing code:', err);
@@ -59,6 +63,15 @@ async function connectToWhatsApp() {
     if (!msg.message || msg.key.fromMe) return;
 
     const sender = msg.key.remoteJid;
+
+    // --- FILTER NOMOR EKSKLUSIF KAFI ---
+    // Hanya merespons jika pesan datang dari nomor Kafi (6285184803973)
+    if (!sender.includes('6285184803973')) {
+      console.log(`Pesan diabaikan dari nomor asing: ${sender}`);
+      return;
+    }
+    // ------------------------------------
+
     const textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text;
     if (!textMessage) return;
 
@@ -163,8 +176,6 @@ function startProactiveChat(sock) {
       if (currentHour >= 23 || currentHour < 7) {
         console.log('Jam istirahat malam. Corner bobok.');
       } else {
-        const targetNumber = '6285184803973@s.whatsapp.net';
-        
         const prompt = 'buat satu kalimat sapaan pendek untuk kafi pakai huruf kecil semua tanpa tanda baca kaku, gaya chat gaul ala connor deviant yang ngebahas probabilitas random atau iseng. langsung teksnya aja.';
         
         const response = await ai.models.generateContent({
@@ -174,13 +185,13 @@ function startProactiveChat(sock) {
 
         let randomText = response.text || 'analisis persentase lu rebahan seharian pasti udah 90 persen nih ngaku enggak';
         
-        await sock.presenceSubscribe(targetNumber);
-        await sock.sendPresenceUpdate('composing', targetNumber);
+        await sock.presenceSubscribe(KAFI_NUMBER);
+        await sock.sendPresenceUpdate('composing', KAFI_NUMBER);
         await new Promise(resolve => setTimeout(resolve, 2000));
-        await sock.sendPresenceUpdate('paused', targetNumber);
+        await sock.sendPresenceUpdate('paused', KAFI_NUMBER);
 
-        await sock.sendMessage(targetNumber, { text: randomText });
-        console.log(`Corner nge-chat duluan: ${randomText}`);
+        await sock.sendMessage(KAFI_NUMBER, { text: randomText });
+        console.log(`Corner nge-chat duluan ke Kafi: ${randomText}`);
       }
     } catch (err) {
       console.error('Gagal mengirim inisiatif chat:', err);
