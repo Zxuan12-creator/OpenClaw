@@ -1,5 +1,5 @@
 FROM node:18-alpine
 WORKDIR /app
-RUN npm install -g openclaw
+RUN npm init -y && npm install openclaw
 EXPOSE 8080
-CMD ["openclaw"]
+CMD ["node", "-e", "require('openclaw')"]
