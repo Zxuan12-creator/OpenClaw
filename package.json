@@ -9,6 +9,7 @@
   "dependencies": {
     "@google/genai": "latest",
     "@whiskeysockets/baileys": "latest",
-    "pino": "latest"
+    "pino": "latest",
+    "node-fetch": "^3.3.2"
   }
 }
