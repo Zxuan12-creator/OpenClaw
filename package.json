@@ -1,16 +1,15 @@
 {
   "name": "openclaw-whatsapp-bot",
   "version": "1.0.0",
-  "description": "WhatsApp Bot powered by Gemini AI",
+  "description": "WhatsApp Bot powered by TinyFish API",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@google/genai": "latest",
     "@whiskeysockets/baileys": "latest",
     "pino": "latest",
-    "node-fetch": "^3.3.2"
+    "node-fetch": "^3.3.2",
     "qrcode-terminal": "latest"
   }
 }
