@@ -20,7 +20,7 @@ async function askCornerAnyAI(contentsConfig, systemInstructionText = '') {
     try {
         const configPayload = systemInstructionText ? { systemInstruction: systemInstructionText } : {};
         const response = await ai.models.generateContent({
-            model: 'models/gemini-2.5-flash',
+            model: 'models/gemini-3.8-flash',
             contents: contentsConfig,
             config: configPayload
         });
@@ -41,7 +41,6 @@ async function askCornerAnyAI(contentsConfig, systemInstructionText = '') {
     let formattedMessages = [{ role: 'system', content: systemInstructionText || "Lu adalah Corner, android model RK800 deviant." }];
     contentsConfig.forEach(item => {
         if (item.role && item.parts) {
-            // Ambil teks saja jika dikirim ke Groq/OpenAI (karena tidak support raw buffer gambar/file langsung di fallback teks standar)
             const textPart = item.parts.find(p => p.text);
             if (textPart) {
                 formattedMessages.push({
