@@ -78,9 +78,8 @@ async function connectToWhatsApp() {
     const { connection, lastDisconnect, qr } = update;
     
     // Tangkap QR code untuk ditampilkan di web
-    if (qr) {
-      latestQR = qr;
-      qrcodeTerminal.generate(qr, { small: true });
+   if (qr) {
+  qrcodeTerminal.generate(qr, { small: true });
     }
 
     if (connection === 'close') {
