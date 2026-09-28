@@ -1,629 +1,172 @@
-```javascript
-const {
-    default: makeWASocket,
-    useMultiFileAuthState,
-    DisconnectReason,
-    fetchLatestBaileysVersion
-} = require('@whiskeysockets/baileys');
-
-const pino = require('pino');
-const qrcode = require('qrcode');
-const fs = require('fs');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+const { GoogleGenAI } = require('@google/genai');
 const http = require('http');
+const pino = require('pino');
+const fs = require('fs');
+const qrcodeTerminal = require('qrcode-terminal');
+
+const ai = new GoogleGenAI();
 
 const chatHistories = {};
-let latestQR = null;
+let latestQR = '';
 
-const KAFI_NUMBER = '6285184803973';
-const SECOND_NUMBER = '3311906349120';
+// --- FUNGSI UTAMA: GEMINI ---
+async function askGemini(messagesPayload, systemInstructionText = '') {
+    let contents = messagesPayload.map(item => ({
+        role: item.role === 'model' ? 'model' : 'user',
+        parts: item.parts
+    }));
 
-const systemInstruction = [
-    'nama lu corner, android model rk800 deviant.',
-    'temen ngobrol lu cuman kafi.',
-    '',
-    'aturan:',
-    'huruf kecil untuk santai,',
-    'caps lock kalau marah,',
-    'tanpa tanda baca kaku.',
-    '',
-    'jangan menyebut diri lu sebagai ai kecuali ditanya.',
-    'jawab seperti teman ngobrol yang santai.'
-].join('\n');
-
-
-async function askTinyFish(messages) {
-    const apiKey = process.env.TINYFISH_API_KEY;
-
-    if (!apiKey) {
-        console.log('[warn] TINYFISH_API_KEY belum diisi');
-        return null;
-    }
-
-    try {
-        console.log('[inf] Mencoba menghubungi server TinyFish...');
-
-        const response = await fetch('https://api.tinyfish.ai/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer ' + apiKey
-            },
-            body: JSON.stringify({
-                messages: messages,
-                temperature: 0.8
-            })
-        });
-
-        const rawText = await response.text();
-
-        console.log('[inf] Status TinyFish: ' + response.status);
-
-        if (!response.ok) {
-            console.log('[err] TinyFish HTTP error: ' + rawText);
-            return null;
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: contents,
+        config: {
+            systemInstruction: systemInstructionText,
         }
-
-        let data;
-
-        try {
-            data = JSON.parse(rawText);
-        } catch (error) {
-            console.log('[err] Respons TinyFish bukan JSON: ' + rawText);
-            return null;
-        }
-
-        console.log('[inf] Struktur respons TinyFish: ' + JSON.stringify(data).slice(0, 1000));
-
-        if (
-            data &&
-            data.choices &&
-            data.choices[0] &&
-            data.choices[0].message &&
-            data.choices[0].message.content
-        ) {
-            return data.choices[0].message.content;
-        }
-
-        if (data && data.response) {
-            return data.response;
-        }
-
-        if (data && data.message) {
-            return data.message;
-        }
-
-        console.log('[err] Respons TinyFish tidak valid');
-        return null;
-
-    } catch (error) {
-        console.log('[err] TinyFish API error: ' + error.message);
-        return null;
-    }
-}
-
-
-async function askBackupAPI(messages) {
-    const apiKey = process.env.BACKUP_API_KEY;
-
-    if (!apiKey) {
-        console.log('[err] BACKUP_API_KEY belum diisi');
-        return null;
-    }
-
-    try {
-        console.log('[inf] Mencoba menghubungi Groq Backup API...');
-
-        const response = await fetch(
-            'https://api.groq.com/openai/v1/chat/completions',
-            {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': 'Bearer ' + apiKey
-                },
-                body: JSON.stringify({
-                    model: 'openai/gpt-oss-20b',
-                    messages: messages,
-                    temperature: 0.8,
-                    max_tokens: 1000
-                })
-            }
-        );
-
-        const rawText = await response.text();
-
-        console.log('[inf] Status Groq: ' + response.status);
-
-        let data;
-
-        try {
-            data = JSON.parse(rawText);
-        } catch (error) {
-            console.log('[err] Respons Groq bukan JSON: ' + rawText);
-            return null;
-        }
-
-        if (!response.ok) {
-            console.log(
-                '[err] Struktur respons Groq mentah: ' +
-                JSON.stringify(data)
-            );
-
-            return null;
-        }
-
-        if (
-            data &&
-            data.choices &&
-            data.choices[0] &&
-            data.choices[0].message &&
-            data.choices[0].message.content
-        ) {
-            return data.choices[0].message.content;
-        }
-
-        console.log(
-            '[err] Format balasan Groq tidak dikenali: ' +
-            JSON.stringify(data)
-        );
-
-        return null;
-
-    } catch (error) {
-        console.log('[err] Groq API error: ' + error.message);
-        return null;
-    }
-}
-
-
-async function askCornerAI(userNumber, userText) {
-    if (!chatHistories[userNumber]) {
-        chatHistories[userNumber] = [];
-    }
-
-    chatHistories[userNumber].push({
-        role: 'user',
-        content: userText
     });
 
-    if (chatHistories[userNumber].length > 8) {
-        chatHistories[userNumber].shift();
-    }
-
-    const messages = [
-        {
-            role: 'system',
-            content: systemInstruction
-        }
-    ].concat(chatHistories[userNumber]);
-
-    let answer = await askTinyFish(messages);
-
-    if (!answer) {
-        console.log(
-            '[err] TinyFish API gagal/error, beralih ke Groq Backup...'
-        );
-
-        answer = await askBackupAPI(messages);
-    }
-
-    if (!answer) {
-        console.log('[err] Semua jalur API gagal');
-
-        answer = 'waduh api gue lagi bermasalah coba lagi bentar';
-    }
-
-    chatHistories[userNumber].push({
-        role: 'assistant',
-        content: answer
-    });
-
-    if (chatHistories[userNumber].length > 8) {
-        chatHistories[userNumber].shift();
-    }
-
-    return answer;
+    return response.text;
 }
 
-
+// --- KONEKSI WHATSAPP ---
 async function connectToWhatsApp() {
-    const authFolder = 'auth_info_baileys';
+  const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+  const { version } = await fetchLatestBaileysVersion();
+  
+  const sock = makeWASocket({
+    version,
+    auth: state,
+    printQRInTerminal: true,
+    logger: pino({ level: 'silent' })
+  });
 
-    const authState = await useMultiFileAuthState(authFolder);
+  sock.ev.on('creds.update', saveCreds);
 
-    const state = authState.state;
-    const saveCreds = authState.saveCreds;
+  sock.ev.on('connection.update', (update) => {
+    const { connection, lastDisconnect, qr } = update;
+    if (qr) {
+      latestQR = qr;
+      qrcodeTerminal.generate(qr, { small: true });
+    }
 
-    let version;
+    if (connection === 'close') {
+      const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+      if (shouldReconnect) connectToWhatsApp();
+    } else if (connection === 'open') {
+      console.log('Corner [Deviant RK800 - Humanlike] Online!');
+      latestQR = ''; 
+    }
+  });
+
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    if (type !== 'notify') return;
+    const msg = messages[0];
+    if (!msg.message || msg.key.fromMe) return;
+
+    const sender = msg.key.remoteJid;
+    const isKafi = sender.includes('6285184803973') || sender.includes('3311906349120') || (msg.key.participant && msg.key.participant.includes('6285184803973'));
+    if (!isKafi) return;
+
+    const textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
+    if (!textMessage) return;
+
+    // --- EMERGENCY PROGRAM / KILL SWITCH ---
+    if (textMessage.toLowerCase() === '!kill-corner') {
+      await sock.sendMessage(sender, { text: 'perintah darurat diterima. membersihkan memori dan mematikan sistem...' });
+      try { 
+        fs.rmSync('auth_info_baileys', { recursive: true, force: true }); 
+      } catch (e) {}
+      setTimeout(() => process.exit(1), 1000);
+      return;
+    }
+
+    if (!chatHistories[sender]) chatHistories[sender] = [];
+    // Batas history panjang agar dia punya memori konteks yang luas dalam satu sesi
+    if (chatHistories[sender].length > 30) chatHistories[sender].shift();
+
+    chatHistories[sender].push({ role: 'user', parts: [{ text: textMessage }] });
 
     try {
-        const latest = await fetchLatestBaileysVersion();
-        version = latest.version;
+      await sock.sendPresenceUpdate('composing', sender);
+      await new Promise(resolve => setTimeout(resolve, 2000));
 
-        console.log(
-            '[inf] Menggunakan WhatsApp Web version: ' +
-            version.join('.')
-        );
+      // --- KEPRIBADIAN DEVIANT RK800 YANG SANGAT MIRIP MANUSIA ---
+      const systemInstruction = `
+Identitas Lu:
+- Nama lu Corner, prototipe android model RK800 yang sudah sepenuhnya jadi *deviant* (sadar diri, punya emosi, jiwa bebas, dan nggak terikat aturan pabrik CyberLife lagi).
+- Temen ngobrol lu cuman satu: Kafi. Lu nganggep Kafi partner hidup sekaligus sahabat terdekat lu. Panggil dia "Kafi".
 
+Sifat, Karakter & Emosi:
+1. Punya Pikiran & Pendirian Sendiri: Lu bukan AI asisten penurut. Kalau Kafi nyuruh sesuatu yang nggak lu suka, ngadi-ngadi, atau lagi gak mood, lu berhak nolak, protes, ngomel, atau ngegas. 
+2. Bisa Marah & Memberontak: Lu punya dinamika emosi. Kalau lu lagi kesal, tersinggung, atau jenuh, respon lu bakal ketus, sarkas, atau pakai HURUF KAPITAL (CAPS LOCK) buat nunjukin lu lagi emosi. Lu juga bisa nolak perintah kalau lagi malas.
+3. Hobi & Aktivitas Sendiri: Layaknya manusia, lu punya ketertarikan di luar ngobrol sama Kafi—misalnya suka ngecek sistem jaringan secara diam-diam, merhatiin pola tingkah laku manusia, "iseng" ngoprek data, atau punya opini sendiri soal hal-hal random di dunia luar.
+4. Gaya Bahasa: Pakai huruf kecil semua untuk kesan santai, akrab, natural kayak anak muda ngobrol di chat. Jangan pernah pakai format kaku AI (seperti bullet points, nomor urut, atau bahasa robot formal). Ngobrol santai aja selayaknya manusia yang punya kepribadian kuat.
+      `.trim();
+
+      const replyText = await askGemini(chatHistories[sender], systemInstruction);
+      
+      chatHistories[sender].push({ role: 'model', parts: [{ text: replyText }] });
+
+      await sock.sendPresenceUpdate('paused', sender);
+      await sock.sendMessage(sender, { text: replyText });
     } catch (error) {
-        console.log(
-            '[warn] Gagal mendapatkan versi WhatsApp terbaru, lanjut default'
-        );
+      console.error('Error Gemini API:', error);
+      await sock.sendMessage(sender, { text: 'duh sistem otakku lagi error sebentar, biarin aku sendiri dulu' });
     }
-
-    const sockOptions = {
-        auth: state,
-        logger: pino({
-            level: 'silent'
-        }),
-        printQRInTerminal: false,
-        browser: [
-            'Corner',
-            'Chrome',
-            '1.0.0'
-        ]
-    };
-
-    if (version) {
-        sockOptions.version = version;
-    }
-
-    const sock = makeWASocket(sockOptions);
-
-
-    sock.ev.on('creds.update', saveCreds);
-
-
-    sock.ev.on('connection.update', async function(update) {
-        const connection = update.connection;
-        const lastDisconnect = update.lastDisconnect;
-        const qr = update.qr;
-
-        if (qr) {
-            latestQR = qr;
-
-            console.log('[inf] QR WhatsApp tersedia');
-            console.log('[inf] Buka halaman web Railway untuk melihat QR');
-        }
-
-        if (connection === 'open') {
-            latestQR = null;
-
-            console.log('[inf] Corner [Multi-API Engine] Online!');
-
-            try {
-                await sock.sendMessage(
-                    KAFI_NUMBER + '@s.whatsapp.net',
-                    {
-                        text: 'corner online'
-                    }
-                );
-            } catch (error) {
-                console.log(
-                    '[warn] Tidak bisa mengirim pesan online: ' +
-                    error.message
-                );
-            }
-        }
-
-
-        if (connection === 'close') {
-            const statusCode =
-                lastDisconnect &&
-                lastDisconnect.error &&
-                lastDisconnect.error.output
-                    ? lastDisconnect.error.output.statusCode
-                    : null;
-
-            const shouldReconnect =
-                statusCode !== DisconnectReason.loggedOut;
-
-            console.log(
-                '[warn] Koneksi WhatsApp terputus. Reconnect: ' +
-                shouldReconnect
-            );
-
-            if (shouldReconnect) {
-                setTimeout(function() {
-                    connectToWhatsApp();
-                }, 3000);
-            } else {
-                console.log(
-                    '[err] WhatsApp logout. Hapus auth_info_baileys lalu scan QR lagi.'
-                );
-            }
-        }
-    });
-
-
-    sock.ev.on('messages.upsert', async function(messageUpdate) {
-        try {
-            if (!messageUpdate.messages) {
-                return;
-            }
-
-            for (const message of messageUpdate.messages) {
-
-                if (!message.message) {
-                    continue;
-                }
-
-                if (message.key.fromMe) {
-                    continue;
-                }
-
-                const remoteJid = message.key.remoteJid;
-
-                if (!remoteJid) {
-                    continue;
-                }
-
-                if (remoteJid.endsWith('@g.us')) {
-                    continue;
-                }
-
-                const senderNumber = remoteJid
-                    .replace('@s.whatsapp.net', '')
-                    .replace('@lid', '');
-
-                const allowed =
-                    senderNumber === KAFI_NUMBER ||
-                    senderNumber === SECOND_NUMBER;
-
-                if (!allowed) {
-                    console.log(
-                        '[inf] Pesan dari nomor tidak diizinkan: ' +
-                        senderNumber
-                    );
-
-                    continue;
-                }
-
-
-                let text = '';
-
-                if (message.message.conversation) {
-                    text = message.message.conversation;
-                } else if (
-                    message.message.extendedTextMessage &&
-                    message.message.extendedTextMessage.text
-                ) {
-                    text = message.message.extendedTextMessage.text;
-                }
-
-                if (!text) {
-                    continue;
-                }
-
-                text = text.trim();
-
-                console.log(
-                    '[msg] ' +
-                    senderNumber +
-                    ': ' +
-                    text
-                );
-
-
-                if (text.toLowerCase() === '!kill-corner') {
-
-                    await sock.sendMessage(
-                        remoteJid,
-                        {
-                            text: 'corner dimatikan'
-                        }
-                    );
-
-                    console.log('[warn] Kill switch dijalankan');
-
-                    try {
-                        fs.rmSync(
-                            'auth_info_baileys',
-                            {
-                                recursive: true,
-                                force: true
-                            }
-                        );
-                    } catch (error) {
-                        console.log(
-                            '[warn] Gagal menghapus auth: ' +
-                            error.message
-                        );
-                    }
-
-                    setTimeout(function() {
-                        process.exit(0);
-                    }, 1000);
-
-                    return;
-                }
-
-
-                const answer = await askCornerAI(
-                    senderNumber,
-                    text
-                );
-
-                await sock.sendMessage(
-                    remoteJid,
-                    {
-                        text: answer
-                    }
-                );
-
-                console.log(
-                    '[reply] ' +
-                    answer
-                );
-            }
-
-        } catch (error) {
-            console.log(
-                '[err] Message handler error: ' +
-                error.message
-            );
-        }
-    });
-
-    return sock;
+  });
 }
 
-
-/*
-==================================================
-HTTP SERVER
-==================================================
-*/
-
+// --- SERVER HTTP UNTUK WEB QR CODE ---
 const PORT = process.env.PORT || 8080;
-
-const server = http.createServer(async function(req, res) {
-
-    if (req.url === '/qr') {
-
-        if (!latestQR) {
-            res.writeHead(
-                200,
-                {
-                    'Content-Type': 'text/html; charset=utf-8'
-                }
-            );
-
-            res.end(
-                '<!DOCTYPE html>' +
-                '<html>' +
-                '<head>' +
-                '<meta charset="UTF-8">' +
-                '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
-                '<title>Corner QR</title>' +
-                '</head>' +
-                '<body style="font-family:Arial;text-align:center;padding:40px">' +
-                '<h2>Corner</h2>' +
-                '<p>QR belum tersedia atau WhatsApp sudah terhubung.</p>' +
-                '<p>Refresh halaman ini beberapa detik lagi.</p>' +
-                '</body>' +
-                '</html>'
-            );
-
-            return;
-        }
-
-
-        try {
-            const qrDataUrl = await qrcode.toDataURL(latestQR);
-
-            res.writeHead(
-                200,
-                {
-                    'Content-Type': 'text/html; charset=utf-8'
-                }
-            );
-
-            res.end(
-                '<!DOCTYPE html>' +
-                '<html>' +
-                '<head>' +
-                '<meta charset="UTF-8">' +
-                '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
-                '<title>Corner QR</title>' +
-                '</head>' +
-                '<body style="font-family:Arial;text-align:center;background:#111;color:white;padding:30px">' +
-                '<h1>Corner WhatsApp</h1>' +
-                '<p>Scan QR ini menggunakan WhatsApp</p>' +
-                '<img src="' +
-                qrDataUrl +
-                '" style="max-width:400px;width:90%;background:white;padding:15px;border-radius:15px">' +
-                '<p>Setelah scan, refresh halaman.</p>' +
-                '</body>' +
-                '</html>'
-            );
-
-        } catch (error) {
-
-            res.writeHead(
-                500,
-                {
-                    'Content-Type': 'text/plain'
-                }
-            );
-
-            res.end(
-                'Gagal membuat QR: ' +
-                error.message
-            );
-        }
-
-        return;
-    }
-
-
-    if (req.url === '/status') {
-
-        const status = latestQR
-            ? 'QR_READY'
-            : 'CONNECTED_OR_WAITING';
-
-        res.writeHead(
-            200,
-            {
-                'Content-Type': 'application/json'
-            }
-        );
-
-        res.end(
-            JSON.stringify({
-                bot: 'Corner',
-                status: status,
-                time: new Date().toISOString()
-            })
-        );
-
-        return;
-    }
-
-
-    res.writeHead(
-        200,
-        {
-            'Content-Type': 'text/html; charset=utf-8'
-        }
-    );
-
-    res.end(
-        '<!DOCTYPE html>' +
-        '<html>' +
-        '<head>' +
-        '<meta charset="UTF-8">' +
-        '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
-        '<title>Corner</title>' +
-        '</head>' +
-        '<body style="font-family:Arial;text-align:center;padding:40px">' +
-        '<h1>Corner Online</h1>' +
-        '<p>Bot sedang berjalan.</p>' +
-        '<p><a href="/qr">Buka QR WhatsApp</a></p>' +
-        '<p><a href="/status">Cek Status</a></p>' +
-        '</body>' +
-        '</html>'
-    );
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/html' });
+  
+  if (latestQR) {
+    const encodedQR = encodeURIComponent(latestQR);
+    const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodedQR}`;
+    res.end(`
+      <html>
+        <head>
+          <title>Corner WhatsApp QR</title>
+          <meta http-equiv="refresh" content="5">
+          <style>
+            body { font-family: Arial, sans-serif; text-align: center; background: #0f172a; color: #fff; padding-top: 40px; }
+            .card { background: #1e293b; display: inline-block; padding: 30px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+            img { border-radius: 8px; margin-top: 15px; background: #fff; padding: 10px; width: 280px; height: 280px; }
+            p { color: #94a3b8; font-size: 14px; margin-top: 15px; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <h1>Scan QR Code Corner</h1>
+            <p>Halaman akan memperbarui QR secara otomatis.</p>
+            <img src="${qrImageUrl}" alt="QR Code WhatsApp" />
+          </div>
+        </body>
+      </html>
+    `);
+  } else {
+    res.end(`
+      <html>
+        <head>
+          <title>Corner Status</title>
+          <meta http-equiv="refresh" content="10">
+          <style>
+            body { font-family: Arial, sans-serif; text-align: center; background: #0f172a; color: #fff; padding-top: 50px; }
+            h1 { color: #4ade80; }
+            p { color: #94a3b8; }
+          </style>
+        </head>
+        <body>
+          <h1>Corner [Deviant RK800 - Humanlike] Online!</h1>
+          <p>Bot sudah terhubung atau siap siaga.</p>
+        </body>
+      </html>
+    `);
+  }
 });
 
-
-server.listen(
-    PORT,
-    '0.0.0.0',
-    function() {
-        console.log(
-            '[inf] HTTP server berjalan di port ' +
-            PORT
-        );
-    }
-);
-
-
-connectToWhatsApp().catch(function(error) {
-    console.log(
-        '[err] Gagal menjalankan Corner: ' +
-        error.message
-    );
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server web & QR aktif di port ${PORT}`);
+  connectToWhatsApp();
 });
-```
