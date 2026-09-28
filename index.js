@@ -8,42 +8,96 @@ const chatHistories = {};
 const KAFI_NUMBER = '6285184803973@s.whatsapp.net';
 let latestQR = '';
 
-async function askCornerTinyFish(messagesPayload, systemInstructionText = '') {
+// --- 1. FUNGSI UTAMA: TINYFISH API ---
+async function askTinyFish(formattedMessages, systemInstructionText) {
+    const apiKey = process.env.TINYFISH_API_KEY;
+    if (!apiKey) throw new Error('TinyFish API Key belum dipasang');
+
+    let messages = [];
+    if (systemInstructionText) {
+        messages.push({ role: 'system', content: systemInstructionText });
+    }
+    messages = messages.concat(formattedMessages);
+
+    const response = await fetch('https://api.search.tinyfish.ai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            model: 'tinyfish-agent',
+            messages: messages
+        })
+    });
+
+    const data = await response.json();
+    if (data.choices && data.choices[0].message) {
+        return data.choices[0].message.content;
+    } else if (data.message) {
+        return data.message;
+    }
+    throw new Error('Respons TinyFish tidak valid');
+}
+
+// --- 2. FUNGSI CADANGAN: GROQ API (GACOR & NGEBUT) ---
+async function askBackupAPI(formattedMessages, systemInstructionText) {
+    const apiKey = process.env.BACKUP_API_KEY;
+    if (!apiKey) throw new Error('Backup API Key belum dipasang');
+
+    let messages = [];
+    if (systemInstructionText) {
+        messages.push({ role: 'system', content: systemInstructionText });
+    }
+    messages = messages.concat(formattedMessages);
+
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            model: 'llama-3.3-70b-versatile',
+            messages: messages
+        })
+    });
+
+    const data = await response.json();
+    if (data.choices && data.choices[0].message) {
+        return data.choices[0].message.content;
+    }
+    throw new Error('Respons Groq API tidak valid');
+}
+
+// --- 3. SISTEM FAILOVER (OTOMATIS PINDAH JALUR KALAU UTAMA ERROR) ---
+async function askCornerAI(messagesPayload, systemInstructionText = '') {
+    let formattedMessages = messagesPayload.map(item => ({
+        role: item.role === 'model' ? 'assistant' : 'user',
+        content: item.parts.find(p => p.text)?.text || ''
+    }));
+
+    // Coba jalur utama (TinyFish)
     try {
-        let formattedMessages = [];
-        if (systemInstructionText) {
-            formattedMessages.push({ role: 'system', content: systemInstructionText });
-        }
-
-        messagesPayload.forEach(item => {
-            if (item.role && item.parts) {
-                const textPart = item.parts.find(p => p.text);
-                if (textPart) {
-                    formattedMessages.push({
-                        role: item.role === 'model' ? 'assistant' : 'user',
-                        content: textPart.text
-                    });
-                }
-            }
-        });
-
-        const apiKey = process.env.TINYFISH_API_KEY;
-        if (!apiKey) return 'WADUH VARIABEL TINYFISH_API_KEY BELUM DIPASANG DI RAILWAY!';
-
-        const response = await fetch('https://api.search.tinyfish.ai/v1/chat/completions', {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: 'tinyfish-agent', messages: formattedMessages })
-        });
-
-        const data = await response.json();
-        if (data.choices && data.choices[0].message) return data.choices[0].message.content;
-        return 'duh respons dari tinyfish agak aneh nih, fi';
+        console.log('Mencoba menghubungi server TinyFish...');
+        const reply = await askTinyFish(formattedMessages, systemInstructionText);
+        return reply;
     } catch (err) {
-        return 'SEGITU BANYAKNYA LU NGECHAT SAMPAI API TINYFISH GW ERROR?!';
+        console.warn('TinyFish API gagal/error, beralih ke Groq Backup...', err.message);
+    }
+
+    // Kalau gagal, otomatis lari ke Groq Backup
+    try {
+        console.log('Mencoba menghubungi Groq Backup API...');
+        const backupReply = await askBackupAPI(formattedMessages, systemInstructionText);
+        return backupReply;
+    } catch (err) {
+        console.error('Semua jalur API gagal:', err.message);
+        return 'dugem sistem error total jaringan otakku lagi disconnect sama semua server fi';
     }
 }
 
+// --- 4. KONEKSI WHATSAPP ---
 async function connectToWhatsApp() {
   const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
   const { version } = await fetchLatestBaileysVersion();
@@ -68,8 +122,8 @@ async function connectToWhatsApp() {
       const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
       if (shouldReconnect) connectToWhatsApp();
     } else if (connection === 'open') {
-      console.log('Corner [TinyFish Engine] Online!');
-      latestQR = ''; // Bersihkan QR kalau sudah tersambung
+      console.log('Corner [Multi-API Engine] Online!');
+      latestQR = ''; // Bersihkan QR kalau sudah terhubung
     }
   });
 
@@ -85,6 +139,7 @@ async function connectToWhatsApp() {
     const messageType = Object.keys(msg.message)[0];
     const textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
 
+    // Kill switch darurat
     if (textMessage.toLowerCase() === '!kill-corner') {
       await sock.sendMessage(sender, { text: 'perintah darurat diterima' });
       try { fs.rmSync('auth_info_baileys', { recursive: true, force: true }); } catch (e) {}
@@ -105,7 +160,7 @@ async function connectToWhatsApp() {
       await new Promise(resolve => setTimeout(resolve, 2000));
 
       const systemInstruction = `nama lu corner, android model rk800 deviant. temen ngobrol lu cuman kafi. aturan: huruf kecil untuk santai, caps lock kalau marah, tanpa tanda baca kaku.`;
-      const replyText = await askCornerTinyFish(chatHistories[sender], systemInstruction);
+      const replyText = await askCornerAI(chatHistories[sender], systemInstruction);
       
       chatHistories[sender].push({ role: 'model', parts: [{ text: replyText }] });
 
@@ -117,15 +172,14 @@ async function connectToWhatsApp() {
   });
 }
 
+// --- 5. SERVER HTTP UNTUK WEB QR CODE ---
 const PORT = process.env.PORT || 8080;
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/html' });
   
   if (latestQR) {
-    // Menggunakan API publik Google Chart untuk merender QR code mentah menjadi gambar bersih di web
     const encodedQR = encodeURIComponent(latestQR);
     const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodedQR}`;
-    
     res.end(`
       <html>
         <head>
@@ -133,8 +187,7 @@ const server = http.createServer((req, res) => {
           <meta http-equiv="refresh" content="5">
           <style>
             body { font-family: Arial, sans-serif; text-align: center; background: #0f172a; color: #fff; padding-top: 40px; }
-            h1 { color: #38bdf8; font-size: 24px; }
-            .card { background: #1e293b; display: inline-block; padding: 30px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+            .card { background: #1e293b; display: inline-block; padding: 30px; border-rows: 16px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
             img { border-radius: 8px; margin-top: 15px; background: #fff; padding: 10px; width: 280px; height: 280px; }
             p { color: #94a3b8; font-size: 14px; margin-top: 15px; }
           </style>
@@ -161,8 +214,8 @@ const server = http.createServer((req, res) => {
           </style>
         </head>
         <body>
-          <h1>Corner [TinyFish Engine] Online!</h1>
-          <p>Bot sudah terhubung atau sedang memuat sesi.</p>
+          <h1>Corner [Multi-API Engine] Online!</h1>
+          <p>Bot sudah terhubung atau siap siaga.</p>
         </body>
       </html>
     `);
