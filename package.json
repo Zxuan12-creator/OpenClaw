@@ -6,9 +6,9 @@
     "start": "node index.js"
   },
   "dependencies": {
+    "@google/genai": "latest",
     "@whiskeysockets/baileys": "latest",
     "pino": "latest",
-    "qrcode-terminal": "latest",
-    "node-fetch": "^3.3.2"
+    "qrcode-terminal": "latest"
   }
 }
