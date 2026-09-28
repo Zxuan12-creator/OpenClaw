@@ -40,7 +40,7 @@ async function askTinyFish(formattedMessages, systemInstructionText) {
     throw new Error('Respons TinyFish tidak valid');
 }
 
-// --- 2. FUNGSI CADANGAN: GROQ API (GACOR & NGEBUT) ---
+// --- 2. FUNGSI CADANGAN: GROQ API (VERSI AMAN & KEBAL ERROR) ---
 async function askBackupAPI(formattedMessages, systemInstructionText) {
     const apiKey = process.env.BACKUP_API_KEY;
     if (!apiKey) throw new Error('Backup API Key belum dipasang');
@@ -59,15 +59,20 @@ async function askBackupAPI(formattedMessages, systemInstructionText) {
         },
         body: JSON.stringify({
             model: 'llama-3.3-70b-versatile',
-            messages: messages
+            messages: messages,
+            temperature: 0.7
         })
     });
 
     const data = await response.json();
-    if (data.choices && data.choices[0].message) {
+    
+    // Cek struktur standar respons OpenAI/Groq dengan aman
+    if (data && data.choices && data.choices.length > 0 && data.choices[0].message) {
         return data.choices[0].message.content;
-    }
-    throw new Error('Respons Groq API tidak valid');
+    } 
+    
+    console.error('Struktur respons Groq mentah:', JSON.stringify(data));
+    throw new Error('Format balasan Groq tidak dikenali');
 }
 
 // --- 3. SISTEM FAILOVER (OTOMATIS PINDAH JALUR KALAU UTAMA ERROR) ---
@@ -123,7 +128,7 @@ async function connectToWhatsApp() {
       if (shouldReconnect) connectToWhatsApp();
     } else if (connection === 'open') {
       console.log('Corner [Multi-API Engine] Online!');
-      latestQR = ''; // Bersihkan QR kalau sudah terhubung
+      latestQR = ''; 
     }
   });
 
