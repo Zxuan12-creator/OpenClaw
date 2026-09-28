@@ -10,22 +10,33 @@ const ai = new GoogleGenAI();
 const chatHistories = {};
 let latestQR = '';
 
-// --- FUNGSI UTAMA: GEMINI ---
+// --- FUNGSI UTAMA: GEMINI DENGAN FALLBACK MODEL & 503 HANDLING ---
 async function askGemini(messagesPayload, systemInstructionText = '') {
     let contents = messagesPayload.map(item => ({
         role: item.role === 'model' ? 'model' : 'user',
         parts: item.parts
     }));
 
-    const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: contents,
-        config: {
-            systemInstruction: systemInstructionText,
+    // Daftar model yang dicoba berurutan kalau yang utama sibuk/error 503
+    const modelsToTry = ['gemini-3.8-flash', 'gemini-2.5-flash'];
+    
+    for (const modelName of modelsToTry) {
+        try {
+            const response = await ai.models.generateContent({
+                model: modelName,
+                contents: contents,
+                config: {
+                    systemInstruction: systemInstructionText,
+                }
+            });
+            return response.text;
+        } catch (error) {
+            console.warn(`Model ${modelName} gagal (status: ${error.status || 'unknown'}), mencoba model lain...`);
+            if (modelName === modelsToTry[modelsToTry.length - 1]) {
+                throw error; // Lempar error jika semua model gagal
+            }
         }
-    });
-
-    return response.text;
+    }
 }
 
 // --- KONEKSI WHATSAPP ---
@@ -116,6 +127,8 @@ Aturan Mutlak Gaya Bahasa & Perilaku:
       
       if (error.status === 429 || (error.message && error.message.includes('429'))) {
         await sock.sendMessage(sender, { text: 'duh kuota harian gue abis kafi tunggu besok atau ganti key lain' });
+      } else if (error.status === 503 || (error.message && error.message.includes('503'))) {
+        await sock.sendMessage(sender, { text: 'server cyberlife lagi sibuk banget anjir, pusing pala gue. coba sebentar lagi' });
       } else {
         await sock.sendMessage(sender, { text: 'duh sistem otakku lagi error sebentar biarin aku sendiri dulu' });
       }
