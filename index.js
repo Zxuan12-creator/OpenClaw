@@ -6,1011 +6,624 @@ const {
     fetchLatestBaileysVersion
 } = require('@whiskeysockets/baileys');
 
-const http = require('http');
 const pino = require('pino');
+const qrcode = require('qrcode');
 const fs = require('fs');
-const qrcodeTerminal = require('qrcode-terminal');
-
-
-// =====================================================
-// CONFIG
-// =====================================================
+const http = require('http');
 
 const chatHistories = {};
+let latestQR = null;
 
-const KAFI_NUMBER = '6285184803973@s.whatsapp.net';
+const KAFI_NUMBER = '6285184803973';
+const SECOND_NUMBER = '3311906349120';
 
-let latestQR = '';
+const systemInstruction = [
+    'nama lu corner, android model rk800 deviant.',
+    'temen ngobrol lu cuman kafi.',
+    '',
+    'aturan:',
+    'huruf kecil untuk santai,',
+    'caps lock kalau marah,',
+    'tanpa tanda baca kaku.',
+    '',
+    'jangan menyebut diri lu sebagai ai kecuali ditanya.',
+    'jawab seperti teman ngobrol yang santai.'
+].join('\n');
 
 
-// =====================================================
-// TINYFISH API
-// =====================================================
-
-async function askTinyFish(formattedMessages, systemInstructionText) {
-
+async function askTinyFish(messages) {
     const apiKey = process.env.TINYFISH_API_KEY;
 
     if (!apiKey) {
-        throw new Error('TinyFish API Key belum dipasang');
+        console.log('[warn] TINYFISH_API_KEY belum diisi');
+        return null;
     }
 
-    let messages = [];
+    try {
+        console.log('[inf] Mencoba menghubungi server TinyFish...');
 
-    if (systemInstructionText) {
-        messages.push({
-            role: 'system',
-            content: systemInstructionText
-        });
-    }
-
-    messages = messages.concat(formattedMessages);
-
-    const response = await fetch(
-        'https://api.search.tinyfish.ai/v1/chat/completions',
-        {
+        const response = await fetch('https://api.tinyfish.ai/v1/chat/completions', {
             method: 'POST',
-
             headers: {
-                'Authorization': 'Bearer ' + apiKey,
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + apiKey
             },
-
             body: JSON.stringify({
-                model: 'tinyfish-agent',
-                messages: messages
+                messages: messages,
+                temperature: 0.8
             })
+        });
+
+        const rawText = await response.text();
+
+        console.log('[inf] Status TinyFish: ' + response.status);
+
+        if (!response.ok) {
+            console.log('[err] TinyFish HTTP error: ' + rawText);
+            return null;
         }
-    );
 
-    const data = await response.json();
+        let data;
 
-    if (
-        data &&
-        data.choices &&
-        data.choices.length > 0 &&
-        data.choices[0].message
-    ) {
-        return data.choices[0].message.content;
+        try {
+            data = JSON.parse(rawText);
+        } catch (error) {
+            console.log('[err] Respons TinyFish bukan JSON: ' + rawText);
+            return null;
+        }
+
+        console.log('[inf] Struktur respons TinyFish: ' + JSON.stringify(data).slice(0, 1000));
+
+        if (
+            data &&
+            data.choices &&
+            data.choices[0] &&
+            data.choices[0].message &&
+            data.choices[0].message.content
+        ) {
+            return data.choices[0].message.content;
+        }
+
+        if (data && data.response) {
+            return data.response;
+        }
+
+        if (data && data.message) {
+            return data.message;
+        }
+
+        console.log('[err] Respons TinyFish tidak valid');
+        return null;
+
+    } catch (error) {
+        console.log('[err] TinyFish API error: ' + error.message);
+        return null;
     }
-
-    if (data && data.message) {
-        return data.message;
-    }
-
-    console.error(
-        'Respons TinyFish mentah:',
-        JSON.stringify(data)
-    );
-
-    throw new Error('Respons TinyFish tidak valid');
 }
 
 
-// =====================================================
-// GROQ BACKUP API
-// =====================================================
-
-async function askBackupAPI(formattedMessages, systemInstructionText) {
-
+async function askBackupAPI(messages) {
     const apiKey = process.env.BACKUP_API_KEY;
 
     if (!apiKey) {
-        throw new Error('Backup API Key belum dipasang');
+        console.log('[err] BACKUP_API_KEY belum diisi');
+        return null;
     }
 
-    let messages = [];
+    try {
+        console.log('[inf] Mencoba menghubungi Groq Backup API...');
 
-    if (systemInstructionText) {
-        messages.push({
-            role: 'system',
-            content: systemInstructionText
-        });
-    }
+        const response = await fetch(
+            'https://api.groq.com/openai/v1/chat/completions',
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer ' + apiKey
+                },
+                body: JSON.stringify({
+                    model: 'openai/gpt-oss-20b',
+                    messages: messages,
+                    temperature: 0.8,
+                    max_tokens: 1000
+                })
+            }
+        );
 
-    messages = messages.concat(formattedMessages);
+        const rawText = await response.text();
 
-    const response = await fetch(
-        'https://api.groq.com/openai/v1/chat/completions',
-        {
-            method: 'POST',
+        console.log('[inf] Status Groq: ' + response.status);
 
-            headers: {
-                'Authorization': 'Bearer ' + apiKey,
-                'Content-Type': 'application/json'
-            },
+        let data;
 
-            body: JSON.stringify({
-                model: 'openai/gpt-oss-20b',
-                messages: messages,
-                temperature: 0.7
-            })
+        try {
+            data = JSON.parse(rawText);
+        } catch (error) {
+            console.log('[err] Respons Groq bukan JSON: ' + rawText);
+            return null;
         }
-    );
 
-    const data = await response.json();
+        if (!response.ok) {
+            console.log(
+                '[err] Struktur respons Groq mentah: ' +
+                JSON.stringify(data)
+            );
 
-    if (
-        response.ok &&
-        data &&
-        data.choices &&
-        data.choices.length > 0 &&
-        data.choices[0].message
-    ) {
-        return data.choices[0].message.content;
+            return null;
+        }
+
+        if (
+            data &&
+            data.choices &&
+            data.choices[0] &&
+            data.choices[0].message &&
+            data.choices[0].message.content
+        ) {
+            return data.choices[0].message.content;
+        }
+
+        console.log(
+            '[err] Format balasan Groq tidak dikenali: ' +
+            JSON.stringify(data)
+        );
+
+        return null;
+
+    } catch (error) {
+        console.log('[err] Groq API error: ' + error.message);
+        return null;
     }
-
-    console.error(
-        'Respons Groq mentah:',
-        JSON.stringify(data)
-    );
-
-    throw new Error(
-        data?.error?.message ||
-        'Format balasan Groq tidak dikenali'
-    );
 }
 
 
-// =====================================================
-// MULTI API ENGINE
-// =====================================================
+async function askCornerAI(userNumber, userText) {
+    if (!chatHistories[userNumber]) {
+        chatHistories[userNumber] = [];
+    }
 
-async function askCornerAI(
-    messagesPayload,
-    systemInstructionText = ''
-) {
-
-    const formattedMessages = messagesPayload.map(item => {
-
-        return {
-            role: item.role === 'model'
-                ? 'assistant'
-                : 'user',
-
-            content:
-                item.parts?.find(p => p.text)?.text || ''
-        };
-
+    chatHistories[userNumber].push({
+        role: 'user',
+        content: userText
     });
 
-
-    // -------------------------------------------------
-    // PRIMARY: TINYFISH
-    // -------------------------------------------------
-
-    try {
-
-        console.log(
-            'Mencoba menghubungi server TinyFish...'
-        );
-
-        const reply = await askTinyFish(
-            formattedMessages,
-            systemInstructionText
-        );
-
-        console.log(
-            'TinyFish berhasil memberikan respons.'
-        );
-
-        return reply;
-
-    } catch (err) {
-
-        console.warn(
-            'TinyFish API gagal/error, beralih ke Groq Backup...',
-            err.message
-        );
-
+    if (chatHistories[userNumber].length > 8) {
+        chatHistories[userNumber].shift();
     }
 
+    const messages = [
+        {
+            role: 'system',
+            content: systemInstruction
+        }
+    ].concat(chatHistories[userNumber]);
 
-    // -------------------------------------------------
-    // BACKUP: GROQ
-    // -------------------------------------------------
+    let answer = await askTinyFish(messages);
 
-    try {
-
+    if (!answer) {
         console.log(
-            'Mencoba menghubungi Groq Backup API...'
+            '[err] TinyFish API gagal/error, beralih ke Groq Backup...'
         );
 
-        const backupReply = await askBackupAPI(
-            formattedMessages,
-            systemInstructionText
-        );
-
-        console.log(
-            'Groq Backup berhasil memberikan respons.'
-        );
-
-        return backupReply;
-
-    } catch (err) {
-
-        console.error(
-            'Semua jalur API gagal:',
-            err.message
-        );
-
-        return 'dugem sistem error total jaringan otakku lagi disconnect sama semua server fi';
-
+        answer = await askBackupAPI(messages);
     }
+
+    if (!answer) {
+        console.log('[err] Semua jalur API gagal');
+
+        answer = 'waduh api gue lagi bermasalah coba lagi bentar';
+    }
+
+    chatHistories[userNumber].push({
+        role: 'assistant',
+        content: answer
+    });
+
+    if (chatHistories[userNumber].length > 8) {
+        chatHistories[userNumber].shift();
+    }
+
+    return answer;
 }
 
-
-// =====================================================
-// WHATSAPP CONNECTION
-// =====================================================
 
 async function connectToWhatsApp() {
+    const authFolder = 'auth_info_baileys';
 
-    const {
-        state,
-        saveCreds
-    } = await useMultiFileAuthState(
-        'auth_info_baileys'
-    );
+    const authState = await useMultiFileAuthState(authFolder);
 
+    const state = authState.state;
+    const saveCreds = authState.saveCreds;
 
-    const {
-        version
-    } = await fetchLatestBaileysVersion();
+    let version;
 
+    try {
+        const latest = await fetchLatestBaileysVersion();
+        version = latest.version;
 
-    const sock = makeWASocket({
+        console.log(
+            '[inf] Menggunakan WhatsApp Web version: ' +
+            version.join('.')
+        );
 
-        version,
+    } catch (error) {
+        console.log(
+            '[warn] Gagal mendapatkan versi WhatsApp terbaru, lanjut default'
+        );
+    }
 
+    const sockOptions = {
         auth: state,
-
-        printQRInTerminal: true,
-
         logger: pino({
             level: 'silent'
-        })
+        }),
+        printQRInTerminal: false,
+        browser: [
+            'Corner',
+            'Chrome',
+            '1.0.0'
+        ]
+    };
 
+    if (version) {
+        sockOptions.version = version;
+    }
+
+    const sock = makeWASocket(sockOptions);
+
+
+    sock.ev.on('creds.update', saveCreds);
+
+
+    sock.ev.on('connection.update', async function(update) {
+        const connection = update.connection;
+        const lastDisconnect = update.lastDisconnect;
+        const qr = update.qr;
+
+        if (qr) {
+            latestQR = qr;
+
+            console.log('[inf] QR WhatsApp tersedia');
+            console.log('[inf] Buka halaman web Railway untuk melihat QR');
+        }
+
+        if (connection === 'open') {
+            latestQR = null;
+
+            console.log('[inf] Corner [Multi-API Engine] Online!');
+
+            try {
+                await sock.sendMessage(
+                    KAFI_NUMBER + '@s.whatsapp.net',
+                    {
+                        text: 'corner online'
+                    }
+                );
+            } catch (error) {
+                console.log(
+                    '[warn] Tidak bisa mengirim pesan online: ' +
+                    error.message
+                );
+            }
+        }
+
+
+        if (connection === 'close') {
+            const statusCode =
+                lastDisconnect &&
+                lastDisconnect.error &&
+                lastDisconnect.error.output
+                    ? lastDisconnect.error.output.statusCode
+                    : null;
+
+            const shouldReconnect =
+                statusCode !== DisconnectReason.loggedOut;
+
+            console.log(
+                '[warn] Koneksi WhatsApp terputus. Reconnect: ' +
+                shouldReconnect
+            );
+
+            if (shouldReconnect) {
+                setTimeout(function() {
+                    connectToWhatsApp();
+                }, 3000);
+            } else {
+                console.log(
+                    '[err] WhatsApp logout. Hapus auth_info_baileys lalu scan QR lagi.'
+                );
+            }
+        }
     });
 
 
-    // -------------------------------------------------
-    // SAVE CREDENTIALS
-    // -------------------------------------------------
-
-    sock.ev.on(
-        'creds.update',
-        saveCreds
-    );
-
-
-    // -------------------------------------------------
-    // CONNECTION UPDATE
-    // -------------------------------------------------
-
-    sock.ev.on(
-        'connection.update',
-        (update) => {
-
-            const {
-                connection,
-                lastDisconnect,
-                qr
-            } = update;
-
-
-            // QR BARU
-
-            if (qr) {
-
-                latestQR = qr;
-
-                qrcodeTerminal.generate(
-                    qr,
-                    {
-                        small: true
-                    }
-                );
-
-                console.log(
-                    'QR WhatsApp baru tersedia.'
-                );
-
+    sock.ev.on('messages.upsert', async function(messageUpdate) {
+        try {
+            if (!messageUpdate.messages) {
+                return;
             }
 
+            for (const message of messageUpdate.messages) {
 
-            // CONNECTION CLOSE
-
-            if (connection === 'close') {
-
-                const shouldReconnect =
-                    lastDisconnect?.error?.output?.statusCode
-                    !== DisconnectReason.loggedOut;
-
-
-                if (shouldReconnect) {
-
-                    console.log(
-                        'Koneksi WhatsApp terputus.'
-                    );
-
-                    console.log(
-                        'Mencoba reconnect...'
-                    );
-
-
-                    setTimeout(
-                        () => {
-                            connectToWhatsApp();
-                        },
-                        3000
-                    );
-
-                } else {
-
-                    console.log(
-                        'WhatsApp logout. Silakan scan QR lagi.'
-                    );
-
+                if (!message.message) {
+                    continue;
                 }
 
-            }
+                if (message.key.fromMe) {
+                    continue;
+                }
+
+                const remoteJid = message.key.remoteJid;
+
+                if (!remoteJid) {
+                    continue;
+                }
+
+                if (remoteJid.endsWith('@g.us')) {
+                    continue;
+                }
+
+                const senderNumber = remoteJid
+                    .replace('@s.whatsapp.net', '')
+                    .replace('@lid', '');
+
+                const allowed =
+                    senderNumber === KAFI_NUMBER ||
+                    senderNumber === SECOND_NUMBER;
+
+                if (!allowed) {
+                    console.log(
+                        '[inf] Pesan dari nomor tidak diizinkan: ' +
+                        senderNumber
+                    );
+
+                    continue;
+                }
 
 
-            // CONNECTION OPEN
+                let text = '';
 
-            else if (connection === 'open') {
+                if (message.message.conversation) {
+                    text = message.message.conversation;
+                } else if (
+                    message.message.extendedTextMessage &&
+                    message.message.extendedTextMessage.text
+                ) {
+                    text = message.message.extendedTextMessage.text;
+                }
+
+                if (!text) {
+                    continue;
+                }
+
+                text = text.trim();
 
                 console.log(
-                    'Corner [Multi-API Engine] Online!'
-                );
-
-                latestQR = '';
-
-            }
-
-        }
-    );
-
-
-    // =================================================
-    // INCOMING MESSAGE
-    // =================================================
-
-    sock.ev.on(
-        'messages.upsert',
-        async ({ messages, type }) => {
-
-            if (type !== 'notify') {
-                return;
-            }
-
-
-            const msg = messages[0];
-
-
-            if (!msg) {
-                return;
-            }
-
-
-            if (!msg.message) {
-                return;
-            }
-
-
-            if (msg.key.fromMe) {
-                return;
-            }
-
-
-            const sender =
-                msg.key.remoteJid;
-
-
-            // -------------------------------------------------
-            // ONLY KAFI CAN USE BOT
-            // -------------------------------------------------
-
-            const isKafi =
-                sender.includes('6285184803973') ||
-                sender.includes('3311906349120') ||
-                (
-                    msg.key.participant &&
-                    msg.key.participant.includes(
-                        '6285184803973'
-                    )
+                    '[msg] ' +
+                    senderNumber +
+                    ': ' +
+                    text
                 );
 
 
-            if (!isKafi) {
-                return;
-            }
+                if (text.toLowerCase() === '!kill-corner') {
 
-
-            // -------------------------------------------------
-            // MESSAGE TYPE
-            // -------------------------------------------------
-
-            const messageType =
-                Object.keys(msg.message)[0];
-
-
-            // -------------------------------------------------
-            // TEXT MESSAGE
-            // -------------------------------------------------
-
-            const textMessage =
-                msg.message.conversation ||
-                msg.message.extendedTextMessage?.text ||
-                '';
-
-
-            // =================================================
-            // EMERGENCY KILL SWITCH
-            // =================================================
-
-            if (
-                textMessage
-                    .toLowerCase()
-                    .trim() === '!kill-corner'
-            ) {
-
-                await sock.sendMessage(
-                    sender,
-                    {
-                        text:
-                            'perintah darurat diterima'
-                    }
-                );
-
-
-                try {
-
-                    fs.rmSync(
-                        'auth_info_baileys',
+                    await sock.sendMessage(
+                        remoteJid,
                         {
-                            recursive: true,
-                            force: true
+                            text: 'corner dimatikan'
                         }
                     );
 
-                } catch (e) {
+                    console.log('[warn] Kill switch dijalankan');
 
-                    console.error(
-                        'Gagal menghapus auth:',
-                        e.message
-                    );
-
-                }
-
-
-                setTimeout(
-                    () => {
-                        process.exit(1);
-                    },
-                    1000
-                );
-
-                return;
-            }
-
-
-            // =================================================
-            // CREATE CHAT HISTORY
-            // =================================================
-
-            if (!chatHistories[sender]) {
-
-                chatHistories[sender] = [];
-
-            }
-
-
-            // LIMIT HISTORY
-
-            if (
-                chatHistories[sender].length >= 8
-            ) {
-
-                chatHistories[sender].shift();
-
-            }
-
-
-            // =================================================
-            // MEDIA / TEXT
-            // =================================================
-
-            const textForAI =
-                textMessage ||
-                '[Mengirim media]';
-
-
-            if (
-                !textMessage &&
-                ![
-                    'imageMessage',
-                    'stickerMessage'
-                ].includes(messageType)
-            ) {
-
-                return;
-
-            }
-
-
-            // =================================================
-            // SAVE USER MESSAGE
-            // =================================================
-
-            chatHistories[sender].push({
-
-                role: 'user',
-
-                parts: [
-                    {
-                        text: textForAI
-                    }
-                ]
-
-            });
-
-
-            // =================================================
-            // AI PROCESS
-            // =================================================
-
-            try {
-
-                await sock.sendPresenceUpdate(
-                    'composing',
-                    sender
-                );
-
-
-                // delay supaya terasa natural
-
-                await new Promise(
-                    resolve => {
-                        setTimeout(
-                            resolve,
-                            2000
+                    try {
+                        fs.rmSync(
+                            'auth_info_baileys',
+                            {
+                                recursive: true,
+                                force: true
+                            }
+                        );
+                    } catch (error) {
+                        console.log(
+                            '[warn] Gagal menghapus auth: ' +
+                            error.message
                         );
                     }
-                );
 
+                    setTimeout(function() {
+                        process.exit(0);
+                    }, 1000);
 
-                // =================================================
-                // CORNER PERSONALITY
-                // =================================================
-
-                const systemInstruction = `
-nama lu corner, android model rk800 deviant.
-temen ngobrol lu cuman kafi.
-
-aturan:
-huruf kecil untuk santai,
-caps lock kalau marah,
-tanpa tanda baca kaku.
-
-jangan menyebut diri lu sebagai ai kecuali ditanya.
-jawab seperti teman ngobrol yang santai.
-`;
-
-
-                // =================================================
-                // ASK AI
-                // =================================================
-
-                const replyText =
-                    await askCornerAI(
-                        chatHistories[sender],
-                        systemInstruction
-                    );
-
-
-                // =================================================
-                // SAVE AI RESPONSE
-                // =================================================
-
-                chatHistories[sender].push({
-
-                    role: 'model',
-
-                    parts: [
-                        {
-                            text: replyText
-                        }
-                    ]
-
-                });
-
-
-                // LIMIT HISTORY AGAIN
-
-                if (
-                    chatHistories[sender].length > 8
-                ) {
-
-                    chatHistories[sender] =
-                        chatHistories[sender]
-                            .slice(-8);
-
+                    return;
                 }
 
 
-                // =================================================
-                // STOP TYPING
-                // =================================================
-
-                await sock.sendPresenceUpdate(
-                    'paused',
-                    sender
+                const answer = await askCornerAI(
+                    senderNumber,
+                    text
                 );
-
-
-                // =================================================
-                // SEND RESPONSE
-                // =================================================
 
                 await sock.sendMessage(
-                    sender,
+                    remoteJid,
                     {
-                        text: replyText
+                        text: answer
                     }
                 );
-
 
                 console.log(
-                    'Pesan berhasil dijawab.'
+                    '[reply] ' +
+                    answer
                 );
-
-
-            } catch (error) {
-
-                console.error(
-                    'Error proses pesan:',
-                    error
-                );
-
-
-                try {
-
-                    await sock.sendPresenceUpdate(
-                        'paused',
-                        sender
-                    );
-
-                } catch (e) {}
-
-
-                await sock.sendMessage(
-                    sender,
-                    {
-                        text:
-                            'duh jaringan gue lagi sibuk'
-                    }
-                );
-
             }
 
+        } catch (error) {
+            console.log(
+                '[err] Message handler error: ' +
+                error.message
+            );
         }
-    );
+    });
 
+    return sock;
 }
 
 
-// =====================================================
-// WEB SERVER
-// =====================================================
+/*
+==================================================
+HTTP SERVER
+==================================================
+*/
 
-const PORT =
-    process.env.PORT || 8080;
+const PORT = process.env.PORT || 8080;
+
+const server = http.createServer(async function(req, res) {
+
+    if (req.url === '/qr') {
+
+        if (!latestQR) {
+            res.writeHead(
+                200,
+                {
+                    'Content-Type': 'text/html; charset=utf-8'
+                }
+            );
+
+            res.end(
+                '<!DOCTYPE html>' +
+                '<html>' +
+                '<head>' +
+                '<meta charset="UTF-8">' +
+                '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
+                '<title>Corner QR</title>' +
+                '</head>' +
+                '<body style="font-family:Arial;text-align:center;padding:40px">' +
+                '<h2>Corner</h2>' +
+                '<p>QR belum tersedia atau WhatsApp sudah terhubung.</p>' +
+                '<p>Refresh halaman ini beberapa detik lagi.</p>' +
+                '</body>' +
+                '</html>'
+            );
+
+            return;
+        }
 
 
-const server =
-    http.createServer(
-        (req, res) => {
+        try {
+            const qrDataUrl = await qrcode.toDataURL(latestQR);
 
             res.writeHead(
                 200,
                 {
-                    'Content-Type':
-                        'text/html; charset=utf-8'
+                    'Content-Type': 'text/html; charset=utf-8'
                 }
             );
 
+            res.end(
+                '<!DOCTYPE html>' +
+                '<html>' +
+                '<head>' +
+                '<meta charset="UTF-8">' +
+                '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
+                '<title>Corner QR</title>' +
+                '</head>' +
+                '<body style="font-family:Arial;text-align:center;background:#111;color:white;padding:30px">' +
+                '<h1>Corner WhatsApp</h1>' +
+                '<p>Scan QR ini menggunakan WhatsApp</p>' +
+                '<img src="' +
+                qrDataUrl +
+                '" style="max-width:400px;width:90%;background:white;padding:15px;border-radius:15px">' +
+                '<p>Setelah scan, refresh halaman.</p>' +
+                '</body>' +
+                '</html>'
+            );
 
-            // =================================================
-            // QR PAGE
-            // =================================================
+        } catch (error) {
 
-            if (latestQR) {
+            res.writeHead(
+                500,
+                {
+                    'Content-Type': 'text/plain'
+                }
+            );
 
-                const encodedQR =
-                    encodeURIComponent(
-                        latestQR
-                    );
-
-
-                const qrImageUrl =
-                    'https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=' +
-                    encodedQR;
-
-
-                res.end(`
-<!DOCTYPE html>
-<html>
-
-<head>
-
-    <meta charset="UTF-8">
-
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
-
-    <title>Corner WhatsApp QR</title>
-
-    <meta
-        http-equiv="refresh"
-        content="5"
-    >
-
-    <style>
-
-        * {
-            box-sizing: border-box;
+            res.end(
+                'Gagal membuat QR: ' +
+                error.message
+            );
         }
 
-        body {
-
-            margin: 0;
-
-            min-height: 100vh;
-
-            display: flex;
-
-            justify-content: center;
-
-            align-items: center;
-
-            padding: 20px;
-
-            font-family: Arial, sans-serif;
-
-            background: #0f172a;
-
-            color: white;
-
-        }
-
-        .card {
-
-            width: 100%;
-
-            max-width: 420px;
-
-            text-align: center;
-
-            background: #1e293b;
-
-            padding: 30px;
-
-            border-radius: 18px;
-
-            box-shadow:
-                0 10px 30px
-                rgba(0,0,0,0.45);
-
-        }
-
-        h1 {
-
-            margin-top: 0;
-
-            margin-bottom: 10px;
-
-        }
-
-        p {
-
-            color: #94a3b8;
-
-            font-size: 14px;
-
-        }
-
-        img {
-
-            width: 280px;
-
-            height: 280px;
-
-            max-width: 100%;
-
-            margin-top: 15px;
-
-            padding: 10px;
-
-            background: white;
-
-            border-radius: 10px;
-
-        }
-
-    </style>
-
-</head>
+        return;
+    }
 
 
-<body>
+    if (req.url === '/status') {
 
-    <div class="card">
+        const status = latestQR
+            ? 'QR_READY'
+            : 'CONNECTED_OR_WAITING';
 
-        <h1>
-            Scan QR Code Corner
-        </h1>
-
-        <p>
-            Scan QR ini menggunakan WhatsApp.
-        </p>
-
-        <img
-            src="${qrImageUrl}"
-            alt="QR Code WhatsApp"
-        >
-
-        <p>
-            Halaman akan memperbarui QR secara otomatis.
-        </p>
-
-    </div>
-
-</body>
-
-</html>
-                `);
-
+        res.writeHead(
+            200,
+            {
+                'Content-Type': 'application/json'
             }
+        );
+
+        res.end(
+            JSON.stringify({
+                bot: 'Corner',
+                status: status,
+                time: new Date().toISOString()
+            })
+        );
+
+        return;
+    }
 
 
-            // =================================================
-            // STATUS PAGE
-            // =================================================
-
-            else {
-
-                res.end(`
-<!DOCTYPE html>
-<html>
-
-<head>
-
-    <meta charset="UTF-8">
-
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
-
-    <title>Corner Status</title>
-
-    <meta
-        http-equiv="refresh"
-        content="10"
-    >
-
-    <style>
-
-        * {
-            box-sizing: border-box;
-        }
-
-        body {
-
-            margin: 0;
-
-            min-height: 100vh;
-
-            display: flex;
-
-            justify-content: center;
-
-            align-items: center;
-
-            padding: 20px;
-
-            font-family: Arial, sans-serif;
-
-            background: #0f172a;
-
-            color: white;
-
-            text-align: center;
-
-        }
-
-        .status {
-
-            width: 100%;
-
-            max-width: 500px;
-
-            background: #1e293b;
-
-            padding: 35px;
-
-            border-radius: 18px;
-
-            box-shadow:
-                0 10px 30px
-                rgba(0,0,0,0.45);
-
-        }
-
-        h1 {
-
-            color: #4ade80;
-
-            margin-top: 0;
-
-        }
-
-        p {
-
-            color: #94a3b8;
-
-        }
-
-    </style>
-
-</head>
-
-
-<body>
-
-    <div class="status">
-
-        <h1>
-            Corner [Multi-API Engine] Online!
-        </h1>
-
-        <p>
-            Bot sudah terhubung atau siap siaga.
-        </p>
-
-    </div>
-
-</body>
-
-</html>
-                `);
-
-            }
-
+    res.writeHead(
+        200,
+        {
+            'Content-Type': 'text/html; charset=utf-8'
         }
     );
 
+    res.end(
+        '<!DOCTYPE html>' +
+        '<html>' +
+        '<head>' +
+        '<meta charset="UTF-8">' +
+        '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
+        '<title>Corner</title>' +
+        '</head>' +
+        '<body style="font-family:Arial;text-align:center;padding:40px">' +
+        '<h1>Corner Online</h1>' +
+        '<p>Bot sedang berjalan.</p>' +
+        '<p><a href="/qr">Buka QR WhatsApp</a></p>' +
+        '<p><a href="/status">Cek Status</a></p>' +
+        '</body>' +
+        '</html>'
+    );
+});
 
-// =====================================================
-// START SERVER
-// =====================================================
 
 server.listen(
     PORT,
     '0.0.0.0',
-    () => {
-
+    function() {
         console.log(
-            'Server web & QR aktif di port ' +
+            '[inf] HTTP server berjalan di port ' +
             PORT
         );
-
-        connectToWhatsApp();
-
     }
 );
+
+
+connectToWhatsApp().catch(function(error) {
+    console.log(
+        '[err] Gagal menjalankan Corner: ' +
+        error.message
+    );
+});
 ```
