@@ -8,8 +8,7 @@
   "dependencies": {
     "@whiskeysockets/baileys": "latest",
     "pino": "latest",
-    "node-fetch": "^3.3.2",
     "qrcode-terminal": "latest",
-    "qrcode": "latest"
+    "node-fetch": "^3.3.2"
   }
 }
