@@ -40,7 +40,7 @@ async function askTinyFish(formattedMessages, systemInstructionText) {
     throw new Error('Respons TinyFish tidak valid');
 }
 
-// --- 2. FUNGSI CADANGAN: GROQ API (MODEL STABIL & PASTI AKTIF) ---
+// --- 2. FUNGSI CADANGAN: GROQ API (MODEL UNIVERSAL) ---
 async function askBackupAPI(formattedMessages, systemInstructionText) {
     const apiKey = process.env.BACKUP_API_KEY;
     if (!apiKey) throw new Error('Backup API Key belum dipasang');
@@ -58,7 +58,7 @@ async function askBackupAPI(formattedMessages, systemInstructionText) {
             'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-            model: 'llama-3.1-8b-instant',
+            model: 'llama3-8b-8192',
             messages: messages,
             temperature: 0.7
         })
