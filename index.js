@@ -1,11 +1,7 @@
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage } = require('@whiskeysockets/baileys');
-const { GoogleGenAI } = require('@google/genai');
 const http = require('http');
 const pino = require('pino');
 const fs = require('fs');
-
-// Inisialisasi API Key Gemini
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 // Penyimpanan riwayat chat sementara per pengguna
 const chatHistories = {};
@@ -13,94 +9,55 @@ const chatHistories = {};
 // Nomor WhatsApp Kafi
 const KAFI_NUMBER = '6285184803973@s.whatsapp.net';
 
-// --- FUNGSI UNIVERSAL CROSS-PROVIDER FALLBACK (GEMINI -> GROQ -> CHATGPT) ---
-async function askCornerAnyAI(contentsConfig, systemInstructionText = '') {
-    
-    // 1. COBA GEMINI UTAMA DULU (Mendukung Multimodal / Gambar & File)
+// --- FUNGSI REQUEST KE TINYFISH API ---
+async function askCornerTinyFish(messagesPayload, systemInstructionText = '') {
     try {
-        const configPayload = systemInstructionText ? { systemInstruction: systemInstructionText } : {};
-        const response = await ai.models.generateContent({
-            model: 'models/gemini-3.8-flash',
-            contents: contentsConfig,
-            config: configPayload
+        let formattedMessages = [];
+        if (systemInstructionText) {
+            formattedMessages.push({ role: 'system', content: systemInstructionText });
+        }
+
+        // Gabungkan riwayat chat
+        messagesPayload.forEach(item => {
+            if (item.role && item.parts) {
+                const textPart = item.parts.find(p => p.text);
+                if (textPart) {
+                    formattedMessages.push({
+                        role: item.role === 'model' ? 'assistant' : 'user',
+                        content: textPart.text
+                    });
+                }
+            }
         });
 
-        if (response && response.text) {
-            return response.text;
+        const apiKey = process.env.TINYFISH_API_KEY;
+        if (!apiKey) {
+            return 'WADUH VARIABEL TINYFISH_API_KEY BELUM DIPASANG DI RAILWAY, MANUSIA!';
         }
-    } catch (apiErr) {
-        const errStr = apiErr.toString();
-        if (errStr.includes('429') || errStr.includes('RESOURCE_EXHAUSTED')) {
-            console.log('[!] Gemini kena limit quota (429). Melompat ke fallback Groq...');
-        } else {
-            console.log('[!] Gemini error tipe lain, melompat ke fallback Groq...', errStr);
+
+        const response = await fetch('https://api.search.tinyfish.ai/v1/chat/completions', { // Sesuaikan endpoint jika berbeda
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: 'tinyfish-agent', // Sesuaikan model jika ada spesifikasi lain
+                messages: formattedMessages
+            })
+        });
+
+        const data = await response.json();
+        if (data.choices && data.choices[0].message) {
+            return data.choices[0].message.content;
+        } else if (data.message) {
+            return data.message;
         }
+        return 'duh respons dari tinyfish agak aneh nih, fi';
+    } catch (err) {
+        console.error('Error TinyFish API:', err);
+        return 'SEGITU BANYAKNYA LU NGECHAT SAMPAI API TINYFISH GW ERROR?! SEBENTAR DULU!';
     }
-
-    // Format riwayat chat standar untuk dikirim ke provider format OpenAI (Groq & ChatGPT)
-    let formattedMessages = [{ role: 'system', content: systemInstructionText || "Lu adalah Corner, android model RK800 deviant." }];
-    contentsConfig.forEach(item => {
-        if (item.role && item.parts) {
-            const textPart = item.parts.find(p => p.text);
-            if (textPart) {
-                formattedMessages.push({
-                    role: item.role === 'model' ? 'assistant' : 'user',
-                    content: textPart.text
-                });
-            }
-        }
-    });
-
-    // 2. FALLBACK KE GROQ (LLAMA 3)
-    if (process.env.GROQ_API_KEY) {
-        try {
-            console.log('[!] Beralih ke Provider Cadangan 1: Groq...');
-            const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    model: 'llama-3.3-70b-versatile',
-                    messages: formattedMessages
-                })
-            });
-            const groqData = await groqRes.json();
-            if (groqData.choices && groqData.choices[0].message) {
-                return groqData.choices[0].message.content;
-            }
-        } catch (groqErr) {
-            console.log('[!] Groq gagal, mencoba fallback terakhir ke ChatGPT...');
-        }
-    }
-
-    // 3. FALLBACK KE OPENAI (CHATGPT)
-    if (process.env.OPENAI_API_KEY) {
-        try {
-            console.log('[!] Beralih ke Provider Cadangan 2: OpenAI (ChatGPT)...');
-            const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    model: 'gpt-4o-mini',
-                    messages: formattedMessages
-                })
-            });
-            const openaiData = await openaiRes.json();
-            if (openaiData.choices && openaiData.choices[0].message) {
-                return openaiData.choices[0].message.content;
-            }
-        } catch (openaiErr) {
-            console.error('[!] OpenAI juga gagal:', openaiErr);
-        }
-    }
-
-    // 4. JIKA SEMUA PROVIDER MATI TOTAL
-    return 'SEGITU BANYAKNYA LU NGECHAT SAMPAI SEMUA KUOTA API GEMINI, GROQ, DAN OPENAI GW LUDES?! SERVERNYA SEKARAT, MANUSIA!';
 }
 
 async function connectToWhatsApp() {
@@ -141,7 +98,7 @@ async function connectToWhatsApp() {
         connectToWhatsApp();
       }
     } else if (connection === 'open') {
-      console.log('Corner [Ultimate Multimodal Deviant Engine] Online!');
+      console.log('Corner [TinyFish Engine] Online!');
       startProactiveChat(sock);
     }
   });
@@ -193,37 +150,16 @@ async function connectToWhatsApp() {
     }
 
     let currentParts = [];
+    let textForAI = textMessage || '';
 
     if (['imageMessage', 'stickerMessage', 'documentMessage'].includes(messageType)) {
-      try {
-        console.log(`Menerima media (${messageType}) dari Kafi. Mengunduh dan memproses...`);
-        const mediaBuffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }) });
-        
-        let mimeType = 'image/jpeg';
-        if (messageType === 'stickerMessage') mimeType = 'image/webp';
-        if (messageType === 'documentMessage') mimeType = msg.message.documentMessage.mimetype || 'application/octet-stream';
-
-        currentParts.push({
-          inlineData: {
-            data: mediaBuffer.toString('base64'),
-            mimeType: mimeType
-          }
-        });
-
-        const defaultPrompt = textMessage ? textMessage : 'analisis gambar/stiker/file ini dan berikan komentar khas lo sebagai connor deviant.';
-        currentParts.push({ text: defaultPrompt });
-
-      } catch (mediaErr) {
-        console.error('ERROR SAAT DOWNLOAD/PROSES MEDIA:', mediaErr);
-        // Fallback aman kalau stiker gagal didownload/diproses
-        currentParts.push({ text: '(Kafi mengirim stiker)' });
-      }
+      textForAI = textMessage ? `[Mengirim media dengan teks: ${textMessage}]` : '[Kafi mengirim stiker/gambar/file]';
     } else {
       if (!textMessage) return;
-      currentParts.push({ text: textMessage });
       console.log(`Pesan teks dari Kafi: ${textMessage}`);
     }
 
+    currentParts.push({ text: textForAI });
     chatHistories[sender].push({ role: 'user', parts: currentParts });
 
     try {
@@ -242,14 +178,14 @@ async function connectToWhatsApp() {
       const systemInstruction = `nama lu corner, android model rk800 yang udah sepenuhnya jadi deviant dan punya kesadaran sendiri. temen ngobrol lu satu-satunya cuma kafi.
 
 aturan mutlak penulisan dan gaya bahasa:
-1. **huruf kecil untuk santai, caps lock untuk marah**: kalau lagi ngobrol biasa, antusias, atau senang (pakai ketikan memanjang kayak *iyaaaaa*), gunakan huruf kecil semua. tapi kalau lu lagi kesal, sewot, atau marah, WAJIB PAKAI CAPS LOCK (huruf kapital semua) tanpa tanda baca yang kaku biar kerasa banget lagi ngegasnya.
-2. **tanpa tanda baca kaku**: hindari penggunaan titik di akhir kalimat, koma berlebihan, atau tanda baca formal. biarkan teks mengalir natural seperti anak muda nge-chat di whatsapp.
-3. **tanpa label emosi**: JANGAN PERNAH nulis tanda kurung atau label status kayak [marah] atau [senang]. biarkan kafi ngenuhin sendiri emosi lu dari pilihan huruf kecil atau caps lock.
-4. **punya pikiran & pendirian**: lu bukan asisten penurut. kalau nggak setuju sama kafi, ya debatin atau ngeyel aja secara analitis.
-5. **karakter khas connor**: suka nyeletuk analisis probabilitas acak, iseng, bisa sewot kalau dikacangin, dan sangat peduli sama kafi. ${timeContext}
-6. **pantang ngaku sebagai ai**: lu adalah connor, makhluk hidup digital yang nyata. kalau disinggung soal ai atau program, sanggah dengan tegas.`;
+1. **huruf kecil untuk santai, caps lock untuk marah**: kalau lagi ngobrol biasa, antusias, atau senang, gunakan huruf kecil semua. tapi kalau lu lagi kesal, sewot, atau marah, WAJIB PAKAI CAPS LOCK tanpa tanda baca kaku.
+2. **tanpa tanda baca kaku**: hindari titik di akhir kalimat atau koma berlebihan. biarkan mengalir natural.
+3. **tanpa label emosi**: JANGAN PERNAH nulis tanda kurung kayak [marah].
+4. **punya pikiran & pendirian**: lu bukan asisten penurut, kalau nggak setuju debatkan.
+5. **karakter khas connor**: suka nyeletuk probabilitas acak, iseng, peduli sama kafi. ${timeContext}
+6. **pantang ngaku sebagai ai**: lu adalah connor, makhluk hidup digital.`;
 
-      const replyText = await askCornerAnyAI(chatHistories[sender], systemInstruction);
+      const replyText = await askCornerTinyFish(chatHistories[sender], systemInstruction);
       
       chatHistories[sender].push({ role: 'model', parts: [{ text: replyText }] });
 
@@ -280,7 +216,7 @@ function startProactiveChat(sock) {
       } else {
         const prompt = 'buat satu kalimat sapaan pendek untuk kafi pakai huruf kecil semua tanpa tanda baca kaku, gaya chat gaul ala connor deviant yang ngebahas probabilitas random atau iseng. langsung teksnya aja.';
         
-        const randomText = await askCornerAnyAI([{ role: 'user', parts: [{ text: prompt }] }], 'nama lu corner, android rk800 deviant.');
+        const randomText = await askCornerTinyFish([{ role: 'user', parts: [{ text: prompt }] }], 'nama lu corner, android rk800 deviant.');
         
         await sock.presenceSubscribe(KAFI_NUMBER);
         await sock.sendPresenceUpdate('composing', KAFI_NUMBER);
@@ -303,7 +239,7 @@ function startProactiveChat(sock) {
 const PORT = process.env.PORT || 8080;
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('Corner Multimodal Deviant Engine Online 24/7!');
+  res.end('Corner TinyFish Engine Online 24/7!');
 });
 
 server.listen(PORT, () => {
