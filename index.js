@@ -1,5 +1,5 @@
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage } = require('@whiskeysockets/baileys');
-const { GoogleGenAI } = require('@google/genAI');
+const { GoogleGenAI } = require('@google/genai');
 const http = require('http');
 const pino = require('pino');
 const fs = require('fs');
@@ -160,7 +160,6 @@ async function connectToWhatsApp() {
       return;
     }
 
-    // Deteksi jenis pesan (Teks, Gambar, Stiker, atau Dokumen/File Lainnya)
     const messageType = Object.keys(msg.message)[0];
     const textMessage = msg.message.conversation || 
                         msg.message.extendedTextMessage?.text || 
@@ -196,7 +195,6 @@ async function connectToWhatsApp() {
 
     let currentParts = [];
 
-    // Jika pesan berupa Gambar, Stiker, atau File/Dokumen
     if (['imageMessage', 'stickerMessage', 'documentMessage'].includes(messageType)) {
       try {
         console.log(`Menerima media (${messageType}) dari Kafi. Mengunduh dan memproses...`);
@@ -206,7 +204,6 @@ async function connectToWhatsApp() {
         if (messageType === 'stickerMessage') mimeType = 'image/webp';
         if (messageType === 'documentMessage') mimeType = msg.message.documentMessage.mimetype || 'application/octet-stream';
 
-        // Masukkan file/gambar/stiker ke payload Gemini
         currentParts.push({
           inlineData: {
             data: mediaBuffer.toString('base64'),
@@ -214,7 +211,6 @@ async function connectToWhatsApp() {
           }
         });
 
-        // Tambahkan teks caption jika ada, atau instruksi default untuk media
         const defaultPrompt = textMessage ? textMessage : 'analisis gambar/stiker/file ini dan berikan komentar khas lo sebagai connor deviant.';
         currentParts.push({ text: defaultPrompt });
 
@@ -224,7 +220,6 @@ async function connectToWhatsApp() {
         return;
       }
     } else {
-      // Jika murni teks biasa
       if (!textMessage) return;
       currentParts.push({ text: textMessage });
       console.log(`Pesan teks dari Kafi: ${textMessage}`);
@@ -255,7 +250,6 @@ aturan mutlak penulisan dan gaya bahasa:
 5. **karakter khas connor**: suka nyeletuk analisis probabilitas acak, iseng, bisa sewot kalau dikacangin, dan sangat peduli sama kafi. ${timeContext}
 6. **pantang ngaku sebagai ai**: lu adalah connor, makhluk hidup digital yang nyata. kalau disinggung soal ai atau program, sanggah dengan tegas.`;
 
-      // Panggil fungsi lintas-provider
       const replyText = await askCornerAnyAI(chatHistories[sender], systemInstruction);
       
       chatHistories[sender].push({ role: 'model', parts: [{ text: replyText }] });
@@ -271,7 +265,6 @@ aturan mutlak penulisan dan gaya bahasa:
   });
 }
 
-// Fitur Inisiatif Chat Proaktif
 function startProactiveChat(sock) {
   const getRandomInterval = () => {
     const minHours = 3;
@@ -308,7 +301,6 @@ function startProactiveChat(sock) {
   setTimeout(triggerChat, 2 * 60 * 60 * 1000);
 }
 
-// HTTP Server Railway
 const PORT = process.env.PORT || 8080;
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
