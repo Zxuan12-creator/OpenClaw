@@ -10,15 +10,15 @@ const ai = new GoogleGenAI();
 const chatHistories = {};
 let latestQR = '';
 
-// --- FUNGSI UTAMA: GEMINI DENGAN FALLBACK MODEL & 503 HANDLING ---
+// --- FUNGSI UTAMA: GEMINI DENGAN MODEL STABIL ---
 async function askGemini(messagesPayload, systemInstructionText = '') {
     let contents = messagesPayload.map(item => ({
         role: item.role === 'model' ? 'model' : 'user',
         parts: item.parts
     }));
 
-    // Daftar model yang dicoba berurutan kalau yang utama sibuk/error 503
-    const modelsToTry = ['gemini-3.8-flash', 'gemini-2.5-flash'];
+    // Daftar model stabil yang dicoba berurutan
+    const modelsToTry = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-3.8-flash'];
     
     for (const modelName of modelsToTry) {
         try {
