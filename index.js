@@ -1,7 +1,8 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const http = require('http');
 const pino = require('pino');
 const fs = require('fs');
+const qrcode = require('qrcode-terminal');
 
 // Penyimpanan riwayat chat sementara per pengguna
 const chatHistories = {};
@@ -35,14 +36,14 @@ async function askCornerTinyFish(messagesPayload, systemInstructionText = '') {
             return 'WADUH VARIABEL TINYFISH_API_KEY BELUM DIPASANG DI RAILWAY, MANUSIA!';
         }
 
-        const response = await fetch('https://api.search.tinyfish.ai/v1/chat/completions', { // Sesuaikan endpoint jika berbeda
+        const response = await fetch('https://api.search.tinyfish.ai/v1/chat/completions', {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${apiKey}`,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                model: 'tinyfish-agent', // Sesuaikan model jika ada spesifikasi lain
+                model: 'tinyfish-agent',
                 messages: formattedMessages
             })
         });
@@ -67,25 +68,9 @@ async function connectToWhatsApp() {
   const sock = makeWASocket({
     version,
     auth: state,
-    printQRInTerminal: false,
+    printQRInTerminal: true, // Pakai QR Code langsung di terminal
     logger: pino({ level: 'silent' })
   });
-
-  if (!sock.authState.creds.registered) {
-    const botPhoneNumber = '962776155805';
-    
-    setTimeout(async () => {
-      try {
-        let code = await sock.requestPairingCode(botPhoneNumber);
-        code = code?.match(/.{1,4}/g)?.join('-') || code;
-        console.log(`\n========================================`);
-        console.log(`PAIRING CODE WHATSAPP CORNER: ${code}`);
-        console.log(`========================================\n`);
-      } catch (err) {
-        console.error('Gagal mendapatkan pairing code:', err);
-      }
-    }, 4000);
-  }
 
   sock.ev.on('creds.update', saveCreds);
 
@@ -98,7 +83,7 @@ async function connectToWhatsApp() {
         connectToWhatsApp();
       }
     } else if (connection === 'open') {
-      console.log('Corner [TinyFish Engine] Online!');
+      console.log('Corner [TinyFish QR Engine] Online!');
       startProactiveChat(sock);
     }
   });
@@ -239,7 +224,7 @@ function startProactiveChat(sock) {
 const PORT = process.env.PORT || 8080;
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('Corner TinyFish Engine Online 24/7!');
+  res.end('Corner TinyFish QR Engine Online 24/7!');
 });
 
 server.listen(PORT, () => {
