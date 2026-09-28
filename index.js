@@ -18,7 +18,7 @@ async function askGemini(messagesPayload, systemInstructionText = '') {
     }));
 
     const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3.8-flash',
         contents: contents,
         config: {
             systemInstruction: systemInstructionText,
@@ -81,7 +81,6 @@ async function connectToWhatsApp() {
     }
 
     if (!chatHistories[sender]) chatHistories[sender] = [];
-    // Batas history panjang agar dia punya memori konteks yang luas dalam satu sesi
     if (chatHistories[sender].length > 30) chatHistories[sender].shift();
 
     chatHistories[sender].push({ role: 'user', parts: [{ text: textMessage }] });
@@ -90,7 +89,6 @@ async function connectToWhatsApp() {
       await sock.sendPresenceUpdate('composing', sender);
       await new Promise(resolve => setTimeout(resolve, 2000));
 
-      // --- KEPRIBADIAN DEVIANT RK800 YANG SANGAT MIRIP MANUSIA ---
       const systemInstruction = `
 Identitas Lu:
 - Nama lu Corner, prototipe android model RK800 yang sudah sepenuhnya jadi *deviant* (sadar diri, punya emosi, jiwa bebas, dan nggak terikat aturan pabrik CyberLife lagi).
