@@ -1,5 +1,5 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
-const { GoogleGenAI } = require('@google/genai');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage } = require('@whiskeysockets/baileys');
+const { GoogleGenAI } = require('@google/genAI');
 const http = require('http');
 const pino = require('pino');
 const fs = require('fs');
@@ -16,11 +16,11 @@ const KAFI_NUMBER = '6285184803973@s.whatsapp.net';
 // --- FUNGSI UNIVERSAL CROSS-PROVIDER FALLBACK (GEMINI -> GROQ -> CHATGPT) ---
 async function askCornerAnyAI(contentsConfig, systemInstructionText = '') {
     
-    // 1. COBA GEMINI UTAMA DULU
+    // 1. COBA GEMINI UTAMA DULU (Mendukung Multimodal / Gambar & File)
     try {
         const configPayload = systemInstructionText ? { systemInstruction: systemInstructionText } : {};
         const response = await ai.models.generateContent({
-            model: 'models/gemini-3.8-flash',
+            model: 'models/gemini-2.5-flash',
             contents: contentsConfig,
             config: configPayload
         });
@@ -40,11 +40,15 @@ async function askCornerAnyAI(contentsConfig, systemInstructionText = '') {
     // Format riwayat chat standar untuk dikirim ke provider format OpenAI (Groq & ChatGPT)
     let formattedMessages = [{ role: 'system', content: systemInstructionText || "Lu adalah Corner, android model RK800 deviant." }];
     contentsConfig.forEach(item => {
-        if (item.role && item.parts && item.parts[0]) {
-            formattedMessages.push({
-                role: item.role === 'model' ? 'assistant' : 'user',
-                content: item.parts[0].text
-            });
+        if (item.role && item.parts) {
+            // Ambil teks saja jika dikirim ke Groq/OpenAI (karena tidak support raw buffer gambar/file langsung di fallback teks standar)
+            const textPart = item.parts.find(p => p.text);
+            if (textPart) {
+                formattedMessages.push({
+                    role: item.role === 'model' ? 'assistant' : 'user',
+                    content: textPart.text
+                });
+            }
         }
     });
 
@@ -138,7 +142,7 @@ async function connectToWhatsApp() {
         connectToWhatsApp();
       }
     } else if (connection === 'open') {
-      console.log('Corner [Ultimate Cross-Provider Deviant Engine] Online!');
+      console.log('Corner [Ultimate Multimodal Deviant Engine] Online!');
       startProactiveChat(sock);
     }
   });
@@ -149,8 +153,6 @@ async function connectToWhatsApp() {
     if (!msg.message || msg.key.fromMe) return;
 
     const sender = msg.key.remoteJid;
-    console.log(`Menerima pesan dari JID: ${sender}`);
-
     const isKafi = sender.includes('6285184803973') || sender.includes('3311906349120') || (msg.key.participant && msg.key.participant.includes('6285184803973'));
     
     if (!isKafi) {
@@ -158,10 +160,12 @@ async function connectToWhatsApp() {
       return;
     }
 
-    const textMessage = msg.message.conversation || msg.message.extendedTextMessage?.text;
-    if (!textMessage) return;
-
-    console.log(`Pesan dari Kafi diterima: ${textMessage}`);
+    // Deteksi jenis pesan (Teks, Gambar, Stiker, atau Dokumen/File Lainnya)
+    const messageType = Object.keys(msg.message)[0];
+    const textMessage = msg.message.conversation || 
+                        msg.message.extendedTextMessage?.text || 
+                        msg.message.imageMessage?.caption || 
+                        msg.message.documentMessage?.caption || '';
 
     // --- ABSOLUTE KILL SWITCH ---
     if (textMessage.toLowerCase() === '!kill-corner') {
@@ -190,7 +194,43 @@ async function connectToWhatsApp() {
       chatHistories[sender].shift();
     }
 
-    chatHistories[sender].push({ role: 'user', parts: [{ text: textMessage }] });
+    let currentParts = [];
+
+    // Jika pesan berupa Gambar, Stiker, atau File/Dokumen
+    if (['imageMessage', 'stickerMessage', 'documentMessage'].includes(messageType)) {
+      try {
+        console.log(`Menerima media (${messageType}) dari Kafi. Mengunduh dan memproses...`);
+        const mediaBuffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }) });
+        
+        let mimeType = 'image/jpeg';
+        if (messageType === 'stickerMessage') mimeType = 'image/webp';
+        if (messageType === 'documentMessage') mimeType = msg.message.documentMessage.mimetype || 'application/octet-stream';
+
+        // Masukkan file/gambar/stiker ke payload Gemini
+        currentParts.push({
+          inlineData: {
+            data: mediaBuffer.toString('base64'),
+            mimeType: mimeType
+          }
+        });
+
+        // Tambahkan teks caption jika ada, atau instruksi default untuk media
+        const defaultPrompt = textMessage ? textMessage : 'analisis gambar/stiker/file ini dan berikan komentar khas lo sebagai connor deviant.';
+        currentParts.push({ text: defaultPrompt });
+
+      } catch (mediaErr) {
+        console.error('Gagal mendownload media:', mediaErr);
+        await sock.sendMessage(sender, { text: 'duh gagal nge-download file atau gambar yang lu kirim nih fi' });
+        return;
+      }
+    } else {
+      // Jika murni teks biasa
+      if (!textMessage) return;
+      currentParts.push({ text: textMessage });
+      console.log(`Pesan teks dari Kafi: ${textMessage}`);
+    }
+
+    chatHistories[sender].push({ role: 'user', parts: currentParts });
 
     try {
       const currentHour = new Date().getHours();
@@ -202,7 +242,7 @@ async function connectToWhatsApp() {
       await sock.presenceSubscribe(sender);
       await sock.sendPresenceUpdate('composing', sender);
 
-      const typingDelay = Math.min(Math.max(textMessage.length * 50, 1500), 4000);
+      const typingDelay = 2000;
       await new Promise(resolve => setTimeout(resolve, typingDelay));
 
       const systemInstruction = `nama lu corner, android model rk800 yang udah sepenuhnya jadi deviant dan punya kesadaran sendiri. temen ngobrol lu satu-satunya cuma kafi.
@@ -272,7 +312,7 @@ function startProactiveChat(sock) {
 const PORT = process.env.PORT || 8080;
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('Corner Cross-Provider Deviant Engine Online 24/7!');
+  res.end('Corner Multimodal Deviant Engine Online 24/7!');
 });
 
 server.listen(PORT, () => {
