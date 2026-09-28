@@ -11,16 +11,24 @@ const pino = require('pino');
 const fs = require('fs');
 const qrcodeTerminal = require('qrcode-terminal');
 
+
+// ======================================================
+// DATA
+// ======================================================
+
 const chatHistories = {};
+
 const KAFI_NUMBER = '6285184803973@s.whatsapp.net';
+
 let latestQR = '';
 
 
 // ======================================================
-// 1. FUNGSI UTAMA: TINYFISH API
+// 1. TINYFISH API
 // ======================================================
 
 async function askTinyFish(formattedMessages, systemInstructionText) {
+
     const apiKey = process.env.TINYFISH_API_KEY;
 
     if (!apiKey) {
@@ -42,10 +50,12 @@ async function askTinyFish(formattedMessages, systemInstructionText) {
         'https://api.search.tinyfish.ai/v1/chat/completions',
         {
             method: 'POST',
+
             headers: {
-                'Authorization': `Bearer ${apiKey}`,
+                'Authorization': 'Bearer ' + apiKey,
                 'Content-Type': 'application/json'
             },
+
             body: JSON.stringify({
                 model: 'tinyfish-agent',
                 messages: messages
@@ -58,7 +68,7 @@ async function askTinyFish(formattedMessages, systemInstructionText) {
     if (
         data &&
         data.choices &&
-        data.choices[0] &&
+        data.choices.length > 0 &&
         data.choices[0].message
     ) {
         return data.choices[0].message.content;
@@ -78,10 +88,11 @@ async function askTinyFish(formattedMessages, systemInstructionText) {
 
 
 // ======================================================
-// 2. FUNGSI CADANGAN: GROQ API
+// 2. GROQ BACKUP API
 // ======================================================
 
 async function askBackupAPI(formattedMessages, systemInstructionText) {
+
     const apiKey = process.env.BACKUP_API_KEY;
 
     if (!apiKey) {
@@ -105,7 +116,7 @@ async function askBackupAPI(formattedMessages, systemInstructionText) {
             method: 'POST',
 
             headers: {
-                'Authorization': `Bearer ${apiKey}`,
+                'Authorization': 'Bearer ' + apiKey,
                 'Content-Type': 'application/json'
             },
 
@@ -150,7 +161,7 @@ async function askCornerAI(
     systemInstructionText = ''
 ) {
 
-    let formattedMessages = messagesPayload.map(item => ({
+    const formattedMessages = messagesPayload.map(item => ({
         role: item.role === 'model'
             ? 'assistant'
             : 'user',
@@ -160,9 +171,9 @@ async function askCornerAI(
     }));
 
 
-    // ----------------------------------------------
-    // COBA TINYFISH
-    // ----------------------------------------------
+    // ==================================================
+    // TINYFISH
+    // ==================================================
 
     try {
 
@@ -190,9 +201,9 @@ async function askCornerAI(
     }
 
 
-    // ----------------------------------------------
-    // COBA GROQ BACKUP
-    // ----------------------------------------------
+    // ==================================================
+    // GROQ BACKUP
+    // ==================================================
 
     try {
 
@@ -236,6 +247,7 @@ async function connectToWhatsApp() {
         'auth_info_baileys'
     );
 
+
     const {
         version
     } = await fetchLatestBaileysVersion();
@@ -252,14 +264,23 @@ async function connectToWhatsApp() {
         logger: pino({
             level: 'silent'
         })
+
     });
 
+
+    // ==================================================
+    // SIMPAN LOGIN WHATSAPP
+    // ==================================================
 
     sock.ev.on(
         'creds.update',
         saveCreds
     );
 
+
+    // ==================================================
+    // STATUS KONEKSI
+    // ==================================================
 
     sock.ev.on(
         'connection.update',
@@ -272,7 +293,10 @@ async function connectToWhatsApp() {
             } = update;
 
 
+            // ------------------------------------------
             // QR CODE
+            // ------------------------------------------
+
             if (qr) {
 
                 latestQR = qr;
@@ -283,10 +307,17 @@ async function connectToWhatsApp() {
                         small: true
                     }
                 );
+
+                console.log(
+                    'QR WhatsApp baru tersedia.'
+                );
             }
 
 
-            // CONNECTION CLOSED
+            // ------------------------------------------
+            // KONEKSI TUTUP
+            // ------------------------------------------
+
             if (connection === 'close') {
 
                 const shouldReconnect =
@@ -297,16 +328,34 @@ async function connectToWhatsApp() {
                 if (shouldReconnect) {
 
                     console.log(
-                        'Koneksi terputus, mencoba reconnect...'
+                        'Koneksi WhatsApp terputus.'
                     );
 
-                    connectToWhatsApp();
+                    console.log(
+                        'Mencoba reconnect...'
+                    );
+
+                    setTimeout(
+                        () => {
+                            connectToWhatsApp();
+                        },
+                        3000
+                    );
+
+                } else {
+
+                    console.log(
+                        'WhatsApp logout. Silakan scan QR lagi.'
+                    );
                 }
 
             }
 
 
-            // CONNECTION OPEN
+            // ------------------------------------------
+            // KONEKSI BERHASIL
+            // ------------------------------------------
+
             else if (connection === 'open') {
 
                 console.log(
@@ -315,6 +364,7 @@ async function connectToWhatsApp() {
 
                 latestQR = '';
             }
+
         }
     );
 
@@ -327,20 +377,37 @@ async function connectToWhatsApp() {
         'messages.upsert',
         async ({ messages, type }) => {
 
-            if (type !== 'notify') return;
+            if (type !== 'notify') {
+                return;
+            }
+
 
             const msg = messages[0];
 
-            if (!msg.message) return;
 
-            if (msg.key.fromMe) return;
+            if (!msg) {
+                return;
+            }
+
+
+            if (!msg.message) {
+                return;
+            }
+
+
+            if (msg.key.fromMe) {
+                return;
+            }
 
 
             const sender =
                 msg.key.remoteJid;
 
 
-            // HANYA KAFI
+            // ==================================================
+            // HANYA IZINKAN KAFI
+            // ==================================================
+
             const isKafi =
                 sender.includes('6285184803973') ||
                 sender.includes('3311906349120') ||
@@ -352,11 +419,13 @@ async function connectToWhatsApp() {
                 );
 
 
-            if (!isKafi) return;
+            if (!isKafi) {
+                return;
+            }
 
 
             // ==================================================
-            // DETEKSI TIPE PESAN
+            // TIPE PESAN
             // ==================================================
 
             const messageType =
@@ -399,7 +468,14 @@ async function connectToWhatsApp() {
                         }
                     );
 
-                } catch (e) {}
+                } catch (e) {
+
+                    console.error(
+                        'Gagal menghapus auth:',
+                        e.message
+                    );
+
+                }
 
 
                 setTimeout(
@@ -407,12 +483,13 @@ async function connectToWhatsApp() {
                     1000
                 );
 
+
                 return;
             }
 
 
             // ==================================================
-            // HISTORY CHAT
+            // BUAT HISTORY
             // ==================================================
 
             if (!chatHistories[sender]) {
@@ -421,19 +498,25 @@ async function connectToWhatsApp() {
             }
 
 
+            // Maksimal 8 pesan
             if (
-                chatHistories[sender].length > 8
+                chatHistories[sender].length >= 8
             ) {
 
                 chatHistories[sender].shift();
             }
 
 
-            let textForAI =
+            // ==================================================
+            // ISI PESAN
+            // ==================================================
+
+            const textForAI =
                 textMessage ||
                 '[Mengirim media]';
 
 
+            // Abaikan tipe media tertentu
             if (
                 !textMessage &&
                 ![
@@ -446,6 +529,10 @@ async function connectToWhatsApp() {
             }
 
 
+            // ==================================================
+            // MASUKKAN KE HISTORY
+            // ==================================================
+
             chatHistories[sender].push({
 
                 role: 'user',
@@ -455,13 +542,14 @@ async function connectToWhatsApp() {
                         text: textForAI
                     }
                 ]
+
             });
 
 
             try {
 
                 // ==================================================
-                // TYPING
+                // TAMPILKAN TYPING
                 // ==================================================
 
                 await sock.sendPresenceUpdate(
@@ -471,30 +559,35 @@ async function connectToWhatsApp() {
 
 
                 await new Promise(
-                    resolve =>
+                    resolve => {
                         setTimeout(
                             resolve,
                             2000
-                        )
+                        );
+                    }
                 );
 
 
                 // ==================================================
-                // PERSONALITY CORNER
+                // KEPRIBADIAN CORNER
                 // ==================================================
 
                 const systemInstruction = `
 nama lu corner, android model rk800 deviant.
 temen ngobrol lu cuman kafi.
+
 aturan:
 huruf kecil untuk santai,
 caps lock kalau marah,
 tanpa tanda baca kaku.
+
+jangan menyebut diri lu sebagai ai kecuali ditanya.
+jawab seperti teman ngobrol yang santai.
 `;
 
 
                 // ==================================================
-                // AI
+                // MINTA JAWABAN AI
                 // ==================================================
 
                 const replyText =
@@ -505,7 +598,7 @@ tanpa tanda baca kaku.
 
 
                 // ==================================================
-                // SIMPAN HISTORY
+                // SIMPAN JAWABAN KE HISTORY
                 // ==================================================
 
                 chatHistories[sender].push({
@@ -517,7 +610,21 @@ tanpa tanda baca kaku.
                             text: replyText
                         }
                     ]
+
                 });
+
+
+                // ==================================================
+                // BATASI HISTORY
+                // ==================================================
+
+                if (
+                    chatHistories[sender].length > 8
+                ) {
+
+                    chatHistories[sender] =
+                        chatHistories[sender].slice(-8);
+                }
 
 
                 // ==================================================
@@ -541,12 +648,27 @@ tanpa tanda baca kaku.
                     }
                 );
 
+
+                console.log(
+                    'Pesan berhasil dijawab.'
+                );
+
             } catch (error) {
 
                 console.error(
                     'Error proses pesan:',
                     error
                 );
+
+
+                try {
+
+                    await sock.sendPresenceUpdate(
+                        'paused',
+                        sender
+                    );
+
+                } catch (e) {}
 
 
                 await sock.sendMessage(
@@ -557,13 +679,14 @@ tanpa tanda baca kaku.
                     }
                 );
             }
+
         }
     );
 }
 
 
 // ======================================================
-// 5. SERVER HTTP UNTUK WEB QR CODE
+// 5. SERVER HTTP UNTUK QR CODE
 // ======================================================
 
 const PORT =
@@ -578,7 +701,7 @@ const server =
                 200,
                 {
                     'Content-Type':
-                        'text/html'
+                        'text/html; charset=utf-8'
                 }
             );
 
@@ -601,81 +724,108 @@ const server =
 
                 res.end(`
 
-                    <html>
+<!DOCTYPE html>
 
-                    <head>
+<html>
 
-                        <title>
-                            Corner WhatsApp QR
-                        </title>
+<head>
 
-                        <meta
-                            http-equiv="refresh"
-                            content="5"
-                        >
+    <meta charset="UTF-8">
 
-                        <style>
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
 
-                            body {
-                                font-family: Arial, sans-serif;
-                                text-align: center;
-                                background: #0f172a;
-                                color: #fff;
-                                padding-top: 40px;
-                            }
+    <title>
+        Corner WhatsApp QR
+    </title>
 
-                            .card {
-                                background: #1e293b;
-                                display: inline-block;
-                                padding: 30px;
-                                border-radius: 16px;
-                                box-shadow:
-                                    0 10px 25px
-                                    rgba(0,0,0,0.5);
-                            }
+    <meta
+        http-equiv="refresh"
+        content="5"
+    >
 
-                            img {
-                                border-radius: 8px;
-                                margin-top: 15px;
-                                background: #fff;
-                                padding: 10px;
-                                width: 280px;
-                                height: 280px;
-                            }
+    <style>
 
-                            p {
-                                color: #94a3b8;
-                                font-size: 14px;
-                                margin-top: 15px;
-                            }
+        * {
+            box-sizing: border-box;
+        }
 
-                        </style>
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background: #0f172a;
+            color: white;
+        }
 
-                    </head>
+        .card {
+            width: 100%;
+            max-width: 420px;
+            text-align: center;
+            background: #1e293b;
+            padding: 30px;
+            border-radius: 18px;
+            box-shadow:
+                0 10px 30px
+                rgba(0, 0, 0, 0.45);
+        }
 
-                    <body>
+        h1 {
+            margin-top: 0;
+            margin-bottom: 10px;
+        }
 
-                        <div class="card">
+        p {
+            color: #94a3b8;
+            font-size: 14px;
+        }
 
-                            <h1>
-                                Scan QR Code Corner
-                            </h1>
+        img {
+            width: 280px;
+            height: 280px;
+            max-width: 100%;
+            margin-top: 15px;
+            padding: 10px;
+            background: white;
+            border-radius: 10px;
+        }
 
-                            <p>
-                                Halaman akan memperbarui
-                                QR secara otomatis.
-                            </p>
+    </style>
 
-                            <img
-                                src="${qrImageUrl}"
-                                alt="QR Code WhatsApp"
-                            />
+</head>
 
-                        </div>
+<body>
 
-                    </body>
+    <div class="card">
 
-                    </html>
+        <h1>
+            Scan QR Code Corner
+        </h1>
+
+        <p>
+            Scan QR ini menggunakan WhatsApp.
+        </p>
+
+        <img
+            src="${qrImageUrl}"
+            alt="QR Code WhatsApp"
+        >
+
+        <p>
+            Halaman akan memperbarui QR secara otomatis.
+        </p>
+
+    </div>
+
+</body>
+
+</html>
 
                 `);
 
@@ -690,63 +840,98 @@ const server =
 
                 res.end(`
 
-                    <html>
+<!DOCTYPE html>
 
-                    <head>
+<html>
 
-                        <title>
-                            Corner Status
-                        </title>
+<head>
 
-                        <meta
-                            http-equiv="refresh"
-                            content="10"
-                        >
+    <meta charset="UTF-8">
 
-                        <style>
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
 
-                            body {
-                                font-family: Arial, sans-serif;
-                                text-align: center;
-                                background: #0f172a;
-                                color: #fff;
-                                padding-top: 50px;
-                            }
+    <title>
+        Corner Status
+    </title>
 
-                            h1 {
-                                color: #4ade80;
-                            }
+    <meta
+        http-equiv="refresh"
+        content="10"
+    >
 
-                            p {
-                                color: #94a3b8;
-                            }
+    <style>
 
-                        </style>
+        * {
+            box-sizing: border-box;
+        }
 
-                    </head>
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background: #0f172a;
+            color: white;
+            text-align: center;
+        }
 
-                    <body>
+        .status {
+            width: 100%;
+            max-width: 500px;
+            background: #1e293b;
+            padding: 35px;
+            border-radius: 18px;
+            box-shadow:
+                0 10px 30px
+                rgba(0, 0, 0, 0.45);
+        }
 
-                        <h1>
-                            Corner [Multi-API Engine] Online!
-                        </h1>
+        h1 {
+            color: #4ade80;
+            margin-top: 0;
+        }
 
-                        <p>
-                            Bot sudah terhubung atau siap siaga.
-                        </p>
+        p {
+            color: #94a3b8;
+        }
 
-                    </body>
+    </style>
 
-                    </html>
+</head>
+
+<body>
+
+    <div class="status">
+
+        <h1>
+            Corner [Multi-API Engine] Online!
+        </h1>
+
+        <p>
+            Bot sudah terhubung atau siap siaga.
+        </p>
+
+    </div>
+
+</body>
+
+</html>
 
                 `);
             }
+
         }
     );
 
 
 // ======================================================
-// 6. START SERVER
+// 6. JALANKAN SERVER
 // ======================================================
 
 server.listen(
@@ -759,15 +944,7 @@ server.listen(
         );
 
         connectToWhatsApp();
+
     }
 );
 ```
-
-**Yang wajib kamu pastikan di environment variable:**
-
-```text
-BACKUP_API_KEY=API_KEY_GROQ_KAMU
-TINYFISH_API_KEY=API_KEY_TINYFISH_KAMU
-```
-
-Kalau kamu deploy di Railway, setelah mengganti kode **redeploy** supaya kode baru benar-benar berjalan.
