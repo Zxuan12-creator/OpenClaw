@@ -187,7 +187,7 @@ const server = http.createServer((req, res) => {
           <meta http-equiv="refresh" content="5">
           <style>
             body { font-family: Arial, sans-serif; text-align: center; background: #0f172a; color: #fff; padding-top: 40px; }
-            .card { background: #1e293b; display: inline-block; padding: 30px; border-rows: 16px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+            .card { background: #1e293b; display: inline-block; padding: 30px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
             img { border-radius: 8px; margin-top: 15px; background: #fff; padding: 10px; width: 280px; height: 280px; }
             p { color: #94a3b8; font-size: 14px; margin-top: 15px; }
           </style>
@@ -222,7 +222,7 @@ const server = http.createServer((req, res) => {
   }
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server web & QR aktif di port ${PORT}`);
   connectToWhatsApp();
 });
