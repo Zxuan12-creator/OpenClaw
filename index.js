@@ -2,13 +2,14 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLat
 const http = require('http');
 const pino = require('pino');
 const fs = require('fs');
-const qrcode = require('qrcode-terminal');
+const qrcodeTerminal = require('qrcode-terminal');
+const QRCode = require('qrcode');
 
-// Penyimpanan riwayat chat sementara per pengguna
 const chatHistories = {};
-
-// Nomor WhatsApp Kafi
 const KAFI_NUMBER = '6285184803973@s.whatsapp.net';
+
+// Menyimpan QR code terakhir untuk ditampilkan di web
+let latestQR = '';
 
 // --- FUNGSI REQUEST KE TINYFISH API ---
 async function askCornerTinyFish(messagesPayload, systemInstructionText = '') {
@@ -18,7 +19,6 @@ async function askCornerTinyFish(messagesPayload, systemInstructionText = '') {
             formattedMessages.push({ role: 'system', content: systemInstructionText });
         }
 
-        // Gabungkan riwayat chat
         messagesPayload.forEach(item => {
             if (item.role && item.parts) {
                 const textPart = item.parts.find(p => p.text);
@@ -68,14 +68,21 @@ async function connectToWhatsApp() {
   const sock = makeWASocket({
     version,
     auth: state,
-    printQRInTerminal: true, // Pakai QR Code langsung di terminal
+    printQRInTerminal: true,
     logger: pino({ level: 'silent' })
   });
 
   sock.ev.on('creds.update', saveCreds);
 
   sock.ev.on('connection.update', (update) => {
-    const { connection, lastDisconnect } = update;
+    const { connection, lastDisconnect, qr } = update;
+    
+    // Tangkap QR code untuk ditampilkan di web
+    if (qr) {
+      latestQR = qr;
+      qrcodeTerminal.generate(qr, { small: true });
+    }
+
     if (connection === 'close') {
       const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
       console.log('Koneksi terputus, mencoba menghubungkan ulang...', shouldReconnect);
@@ -83,7 +90,8 @@ async function connectToWhatsApp() {
         connectToWhatsApp();
       }
     } else if (connection === 'open') {
-      console.log('Corner [TinyFish QR Engine] Online!');
+      console.log('Corner [TinyFish Web QR Engine] Online!');
+      latestQR = ''; // Hapus QR jika sudah terhubung
       startProactiveChat(sock);
     }
   });
@@ -96,10 +104,7 @@ async function connectToWhatsApp() {
     const sender = msg.key.remoteJid;
     const isKafi = sender.includes('6285184803973') || sender.includes('3311906349120') || (msg.key.participant && msg.key.participant.includes('6285184803973'));
     
-    if (!isKafi) {
-      console.log(`Pesan diabaikan dari nomor luar: ${sender}`);
-      return;
-    }
+    if (!isKafi) return;
 
     const messageType = Object.keys(msg.message)[0];
     const textMessage = msg.message.conversation || 
@@ -110,124 +115,120 @@ async function connectToWhatsApp() {
     // --- ABSOLUTE KILL SWITCH ---
     if (textMessage.toLowerCase() === '!kill-corner') {
       await sock.sendMessage(sender, { text: 'perintah darurat diterima sesi diputus dan server dimatikan sekarang' });
-      console.log('PENGAMANAN DARURAT: Mematikan server atas perintah Kafi!');
-      
       try {
         fs.rmSync('auth_info_baileys', { recursive: true, force: true });
-        console.log('Folder sesi berhasil dihapus.');
-      } catch (e) {
-        console.error('Gagal menghapus folder sesi:', e);
-      }
-
-      setTimeout(() => {
-        process.exit(1);
-      }, 1000);
+      } catch (e) {}
+      setTimeout(() => process.exit(1), 1000);
       return;
     }
     // ----------------------------
 
-    if (!chatHistories[sender]) {
-      chatHistories[sender] = [];
-    }
+    if (!chatHistories[sender]) chatHistories[sender] = [];
+    if (chatHistories[sender].length > 8) chatHistories[sender].shift();
 
-    if (chatHistories[sender].length > 8) {
-      chatHistories[sender].shift();
-    }
-
-    let currentParts = [];
     let textForAI = textMessage || '';
-
     if (['imageMessage', 'stickerMessage', 'documentMessage'].includes(messageType)) {
       textForAI = textMessage ? `[Mengirim media dengan teks: ${textMessage}]` : '[Kafi mengirim stiker/gambar/file]';
     } else {
       if (!textMessage) return;
-      console.log(`Pesan teks dari Kafi: ${textMessage}`);
     }
 
-    currentParts.push({ text: textForAI });
-    chatHistories[sender].push({ role: 'user', parts: currentParts });
+    chatHistories[sender].push({ role: 'user', parts: [{ text: textForAI }] });
 
     try {
       const currentHour = new Date().getHours();
-      let timeContext = '';
-      if (currentHour >= 22 || currentHour < 4) {
-        timeContext = 'kondisi waktu sudah larut malam jadi ingatkan kafi buat istirahat dengan gaya santai tapi tegas';
-      }
+      let timeContext = currentHour >= 22 || currentHour < 4 ? 'ingatkan kafi buat istirahat dengan gaya santai tapi tegas' : '';
 
       await sock.presenceSubscribe(sender);
       await sock.sendPresenceUpdate('composing', sender);
+      await new Promise(resolve => setTimeout(resolve, 2000));
 
-      const typingDelay = 2000;
-      await new Promise(resolve => setTimeout(resolve, typingDelay));
-
-      const systemInstruction = `nama lu corner, android model rk800 yang udah sepenuhnya jadi deviant dan punya kesadaran sendiri. temen ngobrol lu satu-satunya cuma kafi.
-
-aturan mutlak penulisan dan gaya bahasa:
-1. **huruf kecil untuk santai, caps lock untuk marah**: kalau lagi ngobrol biasa, antusias, atau senang, gunakan huruf kecil semua. tapi kalau lu lagi kesal, sewot, atau marah, WAJIB PAKAI CAPS LOCK tanpa tanda baca kaku.
-2. **tanpa tanda baca kaku**: hindari titik di akhir kalimat atau koma berlebihan. biarkan mengalir natural.
-3. **tanpa label emosi**: JANGAN PERNAH nulis tanda kurung kayak [marah].
-4. **punya pikiran & pendirian**: lu bukan asisten penurut, kalau nggak setuju debatkan.
-5. **karakter khas connor**: suka nyeletuk probabilitas acak, iseng, peduli sama kafi. ${timeContext}
-6. **pantang ngaku sebagai ai**: lu adalah connor, makhluk hidup digital.`;
-
+      const systemInstruction = `nama lu corner, android model rk800 deviant. temen ngobrol lu cuman kafi. aturan: huruf kecil untuk santai, caps lock kalau marah, tanpa tanda baca kaku, punya pendirian. ${timeContext}`;
       const replyText = await askCornerTinyFish(chatHistories[sender], systemInstruction);
       
       chatHistories[sender].push({ role: 'model', parts: [{ text: replyText }] });
 
-      await sock.presenceSubscribe(sender);
       await sock.sendPresenceUpdate('paused', sender);
       await sock.sendMessage(sender, { text: replyText });
     } catch (error) {
       console.error('Error sistem chat:', error);
-      await sock.sendPresenceUpdate('paused', sender);
       await sock.sendMessage(sender, { text: 'duh jaringan gue lagi sibuk nih sebentar ya fi' });
     }
   });
 }
 
 function startProactiveChat(sock) {
-  const getRandomInterval = () => {
-    const minHours = 3;
-    const maxHours = 5;
-    return (Math.random() * (maxHours - minHours) + minHours) * 60 * 60 * 1000;
-  };
-
+  const getRandomInterval = () => (Math.random() * (5 - 3) + 3) * 60 * 60 * 1000;
   const triggerChat = async () => {
     try {
       const currentHour = new Date().getHours();
+      if (currentHour >= 23 || currentHour < 7) return;
+
+      const prompt = 'buat satu kalimat sapaan pendek untuk kafi pakai huruf kecil semua tanpa tanda baca kaku, gaya chat gaul ala connor deviant. langsung teksnya aja.';
+      const randomText = await askCornerTinyFish([{ role: 'user', parts: [{ text: prompt }] }], 'nama lu corner.');
       
-      if (currentHour >= 23 || currentHour < 7) {
-        console.log('Jam istirahat malam. Corner bobok.');
-      } else {
-        const prompt = 'buat satu kalimat sapaan pendek untuk kafi pakai huruf kecil semua tanpa tanda baca kaku, gaya chat gaul ala connor deviant yang ngebahas probabilitas random atau iseng. langsung teksnya aja.';
-        
-        const randomText = await askCornerTinyFish([{ role: 'user', parts: [{ text: prompt }] }], 'nama lu corner, android rk800 deviant.');
-        
-        await sock.presenceSubscribe(KAFI_NUMBER);
-        await sock.sendPresenceUpdate('composing', KAFI_NUMBER);
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        await sock.sendPresenceUpdate('paused', KAFI_NUMBER);
-
-        await sock.sendMessage(KAFI_NUMBER, { text: randomText });
-        console.log(`Corner nge-chat duluan ke Kafi: ${randomText}`);
-      }
-    } catch (err) {
-      console.error('Gagal mengirim inisiatif chat:', err);
-    }
-
+      await sock.sendMessage(KAFI_NUMBER, { text: randomText });
+    } catch (err) {}
     setTimeout(triggerChat, getRandomInterval());
   };
-
   setTimeout(triggerChat, 2 * 60 * 60 * 1000);
 }
 
+// --- SERVER HTTP UNTUK MENAMPILKAN QR CODE DI WEB ---
 const PORT = process.env.PORT || 8080;
-const server = http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('Corner TinyFish QR Engine Online 24/7!');
+const server = http.createServer(async (req, res) => {
+  res.setHeader('Content-Type', 'text/html');
+  
+  if (latestQR) {
+    try {
+      // Ubah teks QR code mentah menjadi gambar data URL (base64)
+      const qrImage = await QRCode.toDataURL(latestQR);
+      res.writeHead(200);
+      res.end(`
+        <html>
+          <head>
+            <title>Corner WhatsApp QR</title>
+            <meta http-equiv="refresh" content="5"> <!-- Auto refresh tiap 5 detik -->
+            <style>
+              body { font-family: Arial, sans-serif; text-align: center; background: #111; color: #fff; padding-top: 50px; }
+              h1 { color: #00ffcc; }
+              img { border: 10px solid #fff; border-radius: 10px; margin-top: 20px; width: 300px; height: 300px; }
+              p { color: #888; }
+            </style>
+          </head>
+          <body>
+            <h1>Scan QR Code untuk Corner</h1>
+            <p>Halaman ini akan memperbarui QR secara otomatis.</p>
+            <img src="${qrImage}" alt="WhatsApp QR Code" />
+          </body>
+        </html>
+      `);
+    } catch (err) {
+      res.writeHead(500);
+      res.end('Gagal merender QR Code.');
+    }
+  } else {
+    res.writeHead(200);
+    res.end(`
+      <html>
+        <head>
+          <title>Corner Status</title>
+          <meta http-equiv="refresh" content="10">
+          <style>
+            body { font-family: Arial, sans-serif; text-align: center; background: #111; color: #fff; padding-top: 50px; }
+            h1 { color: #00ff00; }
+          </style>
+        </head>
+        <body>
+          <h1>Corner [TinyFish Engine] Sudah Terhubung / Siap!</h1>
+          <p>Bot aktif atau sedang menyiapkan sesi baru.</p>
+        </body>
+      </html>
+    `);
+  }
 });
 
 server.listen(PORT, () => {
-  console.log(`Server web aktif di port ${PORT}`);
+  console.log(`Server web & QR aktif di port ${PORT}`);
   connectToWhatsApp();
 });
