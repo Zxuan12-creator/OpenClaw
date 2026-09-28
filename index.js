@@ -214,9 +214,9 @@ async function connectToWhatsApp() {
         currentParts.push({ text: defaultPrompt });
 
       } catch (mediaErr) {
-        console.error('Gagal mendownload media:', mediaErr);
-        await sock.sendMessage(sender, { text: 'duh gagal nge-download file atau gambar yang lu kirim nih fi' });
-        return;
+        console.error('ERROR SAAT DOWNLOAD/PROSES MEDIA:', mediaErr);
+        // Fallback aman kalau stiker gagal didownload/diproses
+        currentParts.push({ text: '(Kafi mengirim stiker)' });
       }
     } else {
       if (!textMessage) return;
