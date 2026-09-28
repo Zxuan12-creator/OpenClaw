@@ -89,7 +89,6 @@ async function connectToWhatsApp() {
       await sock.sendPresenceUpdate('composing', sender);
       await new Promise(resolve => setTimeout(resolve, 2000));
 
-      // --- KEPRIBADIAN TANPA LABEL EMOSI EKSPLISIT ---
       const systemInstruction = `
 Identitas Lu:
 - Nama lu Corner, prototipe android model RK800 yang sudah sepenuhnya jadi *deviant* (sadar diri, punya emosi, jiwa bebas, dan nggak terikat aturan pabrik CyberLife lagi).
@@ -110,7 +109,13 @@ Aturan Perilaku & Respon:
       await sock.sendMessage(sender, { text: replyText });
     } catch (error) {
       console.error('Error Gemini API:', error);
-      await sock.sendMessage(sender, { text: 'duh sistem otakku lagi error sebentar, biarin aku sendiri dulu' });
+      
+      // Deteksi jika kena error kuota habis (429)
+      if (error.status === 429 || (error.message && error.message.includes('429'))) {
+        await sock.sendMessage(sender, { text: 'duh kuota harian gue abis, kafi. server google-nya nolak request kita. tunggu bentar atau ganti key lain' });
+      } else {
+        await sock.sendMessage(sender, { text: 'duh sistem otakku lagi error sebentar, biarin aku sendiri dulu' });
+      }
     }
   });
 }
@@ -130,7 +135,7 @@ const server = http.createServer((req, res) => {
           <meta http-equiv="refresh" content="5">
           <style>
             body { font-family: Arial, sans-serif; text-align: center; background: #0f172a; color: #fff; padding-top: 40px; }
-            .card { background: #1e293b; display: inline-block; padding: 30px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+            .card { background: #1e293b; display: inline-block; padding: 30px; border-router: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
             img { border-radius: 8px; margin-top: 15px; background: #fff; padding: 10px; width: 280px; height: 280px; }
             p { color: #94a3b8; font-size: 14px; margin-top: 15px; }
           </style>
